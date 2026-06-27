@@ -29,6 +29,7 @@ export default defineConfig({
 				admin: path.resolve(__dirname, 'pages', 'admin.html'),
 				soul: path.resolve(__dirname, 'pages', 'soul.html'),
 				enneagram: path.resolve(__dirname, 'pages', 'enneagram.html'),
+				bdsm: path.resolve(__dirname, 'pages', 'bdsm.html'),
 				'square-notes': path.resolve(__dirname, 'pages', 'square', 'notes.html'),
 				'square-treehole': path.resolve(__dirname, 'pages', 'square', 'treehole.html'),
 				'square-gaze': path.resolve(__dirname, 'pages', 'square', 'gaze.html'),

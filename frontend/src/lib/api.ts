@@ -28,7 +28,7 @@ export type Post = {
 	created_at: string;
 	author_name?: string;
 	author_avatar?: string | null;
-	author_role?: 'admin' | 'user';
+	author_role?: 'admin' | 'user' | 'creator';
 	like_count?: number;
 	comment_count?: number;
 	liked?: boolean;

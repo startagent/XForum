@@ -709,6 +709,14 @@ export function SoulPage() {
 							<br />
 							<a href="/" className="underline hover:text-violet-100">回到未眠 →</a>
 						</div>
+
+						<div className="pt-4 text-center text-[10px] text-violet-300/30">
+							<span>·</span>
+							<a href="/enneagram.html" className="mx-2 hover:text-violet-300/60">九型夜人格</a>
+							<span>·</span>
+							<a href="/bdsm.html" className="mx-2 hover:text-violet-300/60">深度版</a>
+							<span>·</span>
+						</div>
 					</>
 				)}
 			</div>

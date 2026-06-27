@@ -33,6 +33,72 @@ export function SettingsPage() {
 	const [deletePassword, setDeletePassword] = React.useState('');
 	const [deleteTotp, setDeleteTotp] = React.useState('');
 
+	// 夜作者邀请制
+	const [creatorStatus, setCreatorStatus] = React.useState<{ is_creator: boolean; role: string; posts_count: number } | null>(null);
+	const [inviteCode, setInviteCode] = React.useState('');
+	const [inviteNote, setInviteNote] = React.useState('');
+	const [inviteList, setInviteList] = React.useState<Array<any>>([]);
+	const [creatorMsg, setCreatorMsg] = React.useState('');
+	const [creatorLoading, setCreatorLoading] = React.useState(false);
+
+	React.useEffect(() => {
+		apiFetch('/creator/status').then((r) => r.json()).then((d) => setCreatorStatus(d)).catch(() => {});
+		if (user && (user.role === 'admin' || user.role === 'creator')) {
+			apiFetch('/creator/invitations').then((r) => r.json()).then((d) => setInviteList(d.invitations || [])).catch(() => {});
+		}
+	}, [user]);
+
+	async function redeemInvite() {
+		setCreatorLoading(true);
+		setCreatorMsg('');
+		try {
+			const r = await apiFetch('/creator/redeem', {
+				method: 'POST',
+				headers: getSecurityHeaders('POST'),
+				body: JSON.stringify({ code: inviteCode }),
+			});
+			const d = await r.json();
+			if (!r.ok) {
+				setCreatorMsg(d.error || '兑换失败');
+			} else {
+				setCreatorMsg('✓ 已升级为夜作者');
+				setInviteCode('');
+				apiFetch('/creator/status').then((r) => r.json()).then((d) => setCreatorStatus(d)).catch(() => {});
+				if (user) {
+					setUser({ ...user, role: 'creator' });
+				}
+			}
+		} catch (e) {
+			setCreatorMsg('网络错误');
+		} finally {
+			setCreatorLoading(false);
+		}
+	}
+
+	async function generateInvite() {
+		setCreatorLoading(true);
+		setCreatorMsg('');
+		try {
+			const r = await apiFetch('/creator/invitations', {
+				method: 'POST',
+				headers: getSecurityHeaders('POST'),
+				body: JSON.stringify({ note: inviteNote || null, expires_in_days: 0 }),
+			});
+			const d = await r.json();
+			if (!r.ok) {
+				setCreatorMsg(d.error || '生成失败');
+			} else {
+				setCreatorMsg(`✓ 已生成邀请码：${d.code}`);
+				setInviteNote('');
+				apiFetch('/creator/invitations').then((r) => r.json()).then((d) => setInviteList(d.invitations || [])).catch(() => {});
+			}
+		} catch (e) {
+			setCreatorMsg('网络错误');
+		} finally {
+			setCreatorLoading(false);
+		}
+	}
+
 	React.useEffect(() => {
 		if (!user) {
 			window.location.href = '/login';
@@ -365,7 +431,84 @@ export function SettingsPage() {
 					</CardContent>
 				</Card>
 
-				<Card className="border-destructive/40">
+				<Card className="border-violet-500/30 bg-gradient-to-br from-violet-950/20 to-fuchsia-950/20">
+				<CardHeader>
+					<CardTitle className="text-violet-200 flex items-center gap-2">
+						<span className="inline-block h-2 w-2 rounded-full bg-fuchsia-400" />
+						夜作者 · Creator
+					</CardTitle>
+				</CardHeader>
+				<CardContent className="space-y-4">
+					{creatorStatus?.is_creator ? (
+						<>
+							<div className="rounded-md border border-violet-500/30 bg-violet-500/5 p-3 text-sm">
+								<div className="flex items-center gap-2 text-violet-200">
+									<span className="font-serif">✦ 夜作者</span>
+									<span className="text-xs text-violet-300/60">已激活</span>
+								</div>
+								<div className="mt-1 text-xs text-violet-300/60">
+									已发布 {creatorStatus.posts_count} 篇 · 你可以生成邀请码邀请其他创作者
+								</div>
+							</div>
+
+							<div className="space-y-2">
+								<Label>生成邀请码</Label>
+								<Input
+									placeholder="备注（可选，给谁用的）"
+									value={inviteNote}
+									onChange={(e) => setInviteNote(e.target.value)}
+								/>
+								<Button onClick={generateInvite} disabled={creatorLoading} variant="outline" className="border-violet-500/40 text-violet-200 hover:bg-violet-500/10">
+									生成新邀请码
+								</Button>
+							</div>
+
+							{inviteList.length > 0 && (
+								<div className="space-y-1">
+									<div className="text-xs text-muted-foreground">已生成的邀请码</div>
+									{inviteList.map((inv: any) => (
+										<div key={inv.code} className="flex items-center justify-between rounded border border-border bg-muted/30 px-3 py-2 text-sm">
+											<div>
+												<code className="font-mono text-violet-200">{inv.code}</code>
+												{inv.note && <span className="ml-2 text-xs text-muted-foreground">· {inv.note}</span>}
+											</div>
+											<div className="text-xs">
+												{inv.used_by ? (
+													<span className="text-amber-400">已被 {inv.used_username || '未知'} 使用</span>
+												) : (
+													<span className="text-emerald-400">未使用</span>
+												)}
+											</div>
+										</div>
+									))}
+								</div>
+							)}
+						</>
+					) : (
+						<div className="space-y-3">
+							<div className="text-sm text-muted-foreground">
+								夜作者是邀请制创作者身份，拥有专属徽章与发帖权限加成。如果你有邀请码，可以在此兑换。
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="invite-code">邀请码</Label>
+								<Input
+									id="invite-code"
+									placeholder="8 位大写字母/数字"
+									value={inviteCode}
+									onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+									maxLength={8}
+								/>
+								<Button onClick={redeemInvite} disabled={creatorLoading || inviteCode.length !== 8}>
+									兑换
+								</Button>
+							</div>
+						</div>
+					)}
+					{creatorMsg && <div className="text-xs text-violet-300">{creatorMsg}</div>}
+				</CardContent>
+			</Card>
+
+			<Card className="border-destructive/40">
 					<CardHeader>
 						<CardTitle className="text-destructive">危险区域</CardTitle>
 					</CardHeader>

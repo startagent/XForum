@@ -562,6 +562,14 @@ export function EnneagramPage() {
 								<a href="/login.html" className="text-fuchsia-300 hover:underline">登入</a> 后结果会保存到你的资料
 							</div>
 						) : null}
+
+						<div className="pt-4 text-center text-[10px] text-violet-300/30">
+							<span>·</span>
+							<a href="/soul.html" className="mx-2 hover:text-violet-300/60">灵魂测定</a>
+							<span>·</span>
+							<a href="/bdsm.html" className="mx-2 hover:text-violet-300/60">深度版</a>
+							<span>·</span>
+						</div>
 					</>
 				)}
 			</div>

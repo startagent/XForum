@@ -3,7 +3,7 @@ export type User = {
 	email: string;
 	username: string;
 	avatar_url?: string | null;
-	role?: 'user' | 'admin';
+	role?: 'user' | 'admin' | 'creator';
 	totp_enabled?: boolean;
 	email_notifications?: boolean;
 	gender?: string | null;

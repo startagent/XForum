@@ -1163,11 +1163,17 @@ export function IndexPage() {
 														)}
 														<span className="truncate text-violet-100">{p.author_name}</span>
 														{p.author_role === 'admin' ? (
-															<span className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-300">
-																<Shield className="h-3 w-3" />
-																<span className="sr-only">管理员</span>
-															</span>
-														) : null}
+														<span className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-300">
+															<Shield className="h-3 w-3" />
+															<span className="sr-only">管理员</span>
+														</span>
+													) : null}
+													{p.author_role === 'creator' ? (
+														<span className="inline-flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-300">
+															<Sparkles className="h-3 w-3 text-fuchsia-400" />
+															夜作者
+														</span>
+													) : null}
 													</span>
 													{p.category_name ? (
 														<>

@@ -224,6 +224,25 @@ export default {
   email_notifications INTEGER DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
+				`CREATE TABLE IF NOT EXISTS creator_invitations (
+  code TEXT PRIMARY KEY,
+  created_by INTEGER NOT NULL,
+  used_by INTEGER,
+  note TEXT,
+  expires_at INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id),
+  FOREIGN KEY (used_by) REFERENCES users(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS bdsm_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
 				`CREATE TABLE IF NOT EXISTS categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
@@ -1818,6 +1837,206 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 				return jsonResponse({
 					total: totalRow?.c || 0,
 					by_type: (distRows.results || []).map((r: any) => ({ code: r.type_code, name: r.type_name, count: r.c })),
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// ===== 夜作者（Creator）邀请制接口 =====
+
+		// POST /api/creator/redeem - 兑换邀请码，升级为 creator
+		if (url.pathname === '/api/creator/redeem' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const body = await request.json() as any;
+				const code = String(body.code || '').trim().toUpperCase();
+				if (!code) return jsonResponse({ error: '请输入邀请码' }, 400);
+
+				const inv = await env.cforum_db.prepare(
+					'SELECT code, used_by, expires_at FROM creator_invitations WHERE code = ?'
+				).bind(code).first<any>();
+				if (!inv) return jsonResponse({ error: '邀请码不存在' }, 404);
+				if (inv.used_by) return jsonResponse({ error: '邀请码已被使用' }, 400);
+				if (inv.expires_at && inv.expires_at < Date.now()) return jsonResponse({ error: '邀请码已过期' }, 400);
+
+				await env.cforum_db.batch([
+					env.cforum_db.prepare(
+						'UPDATE users SET role = ? WHERE id = ?'
+					).bind('creator', userPayload.id),
+					env.cforum_db.prepare(
+						'UPDATE creator_invitations SET used_by = ? WHERE code = ?'
+					).bind(userPayload.id, code),
+				]);
+				return jsonResponse({ success: true, role: 'creator' });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/creator/invitations - admin/creator 生成邀请码
+		if (url.pathname === '/api/creator/invitations' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				if (userPayload.role !== 'admin' && userPayload.role !== 'creator') {
+					return jsonResponse({ error: '无权生成邀请码' }, 403);
+				}
+				const body = await request.json().catch(() => ({})) as any;
+				const note = body.note ? String(body.note).slice(0, 200) : null;
+				const expiresInDays = Number(body.expires_in_days) || 0;
+				const expiresAt = expiresInDays > 0 ? Math.floor(Date.now() / 1000) + expiresInDays * 86400 : null;
+
+				// 生成 8 位码：大写字母+数字，避开易混字符
+				const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+				let code = '';
+				const rand = new Uint32Array(8);
+				crypto.getRandomValues(rand);
+				for (let i = 0; i < 8; i++) code += chars[rand[i] % chars.length];
+
+				await env.cforum_db.prepare(
+					'INSERT INTO creator_invitations (code, created_by, note, expires_at) VALUES (?, ?, ?, ?)'
+				).bind(code, userPayload.id, note, expiresAt).run();
+				return jsonResponse({ code, expires_at: expiresAt });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/creator/invitations - 列出自己生成的邀请码
+		if (url.pathname === '/api/creator/invitations' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				if (userPayload.role !== 'admin' && userPayload.role !== 'creator') {
+					return jsonResponse({ error: '无权查看' }, 403);
+				}
+				const rows = await env.cforum_db.prepare(
+					`SELECT i.code, i.note, i.expires_at, i.created_at, i.used_by,
+					   u.username as used_username
+					 FROM creator_invitations i
+					 LEFT JOIN users u ON u.id = i.used_by
+					 WHERE i.created_by = ?
+					 ORDER BY i.created_at DESC`
+				).bind(userPayload.id).all<any>();
+				return jsonResponse({ invitations: rows.results || [] });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/creator/status - 当前用户是否为 creator + 统计
+		if (url.pathname === '/api/creator/status' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const user = await env.cforum_db.prepare(
+					'SELECT role FROM users WHERE id = ?'
+				).bind(userPayload.id).first<any>();
+				const postsCount = await env.cforum_db.prepare(
+					'SELECT COUNT(*) as c FROM posts WHERE author_id = ? AND deleted_at IS NULL'
+				).bind(userPayload.id).first<any>();
+				return jsonResponse({
+					is_creator: (user?.role || 'user') === 'creator' || (user?.role || 'user') === 'admin',
+					role: user?.role || 'user',
+					posts_count: postsCount?.c || 0,
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// ===== BDSM 夜人格测试（仅初期迎流，藏深入口）=====
+
+		// GET /api/bdsm/types - 公开：返回测试题与型定义
+		if (url.pathname === '/api/bdsm/types' && method === 'GET') {
+			return jsonResponse({
+				disclaimer: '本测试仅作自我探索用途，不鼓励任何非自愿行为。结果仅自己可见。',
+				types: [
+					{ code: 'D', name: '主导者', tagline: '你享受掌控的快感，也享受被信任的重量', desc: '你天生倾向主导。你享受掌控节奏、设定规则的快感。但你也明白：真正的权力，是对方愿意交出来。', color: '#E11D48' },
+					{ code: 'S', name: '服从者', tagline: '你享受交出去的轻松，也享受被接住的踏实', desc: '你倾向服从。在合适的信任里，你愿意交出控制权，让自己被引导。这并非软弱，是一种主动的让步。', color: '#3B82F6' },
+					{ code: 'T', name: '施虐者', tagline: '痛感是你的语言，节制是你的修养', desc: '你在控制的痛感中找到表达。你享受施予的瞬间，也懂得分寸。节制比强度更重要。', color: '#A855F7' },
+					{ code: 'M', name: '受虐者', tagline: '你从痛感里找到存在，从让渡里找到归属', desc: '你在被施加的痛感中找到存在感。这是一种古老的释放方式。它需要极大的信任，也带来极大的平静。', color: '#F472B6' },
+					{ code: 'SW', name: '切换者', tagline: '你在两端游走，看尽两个方向的风景', desc: '你是流动的。你既会主导也会服从，取决于对方和情境。这让你比单一角色更难被定义，也更难被满足。', color: '#FBBF24' },
+					{ code: 'V', name: '旁观者', tagline: '你享受氛围，多于参与', desc: '你更享受场景本身而不是角色扮演。你像一个观察者，被氛围、张力、关系结构所吸引。', color: '#64748B' },
+				],
+				questions: [
+					{ id: 1, text: '深夜独处时，你脑海里最常浮现的关系模式是？', options: [
+						{ label: '我在主导，对方在跟随', scores: { D: 2, T: 1 } },
+						{ label: '我在被引导，对方在掌控', scores: { S: 2, M: 1 } },
+						{ label: '看场景而变，两端都试过', scores: { SW: 2 } },
+						{ label: '更享受氛围，不一定要扮演', scores: { V: 2 } },
+					]},
+					{ id: 2, text: '让你最着迷的瞬间是？', options: [
+						{ label: '对方按我的节奏呼吸', scores: { D: 2 } },
+						{ label: '对方说"随你"', scores: { D: 1, T: 1 } },
+						{ label: '我被按住不能动的瞬间', scores: { S: 1, M: 2 } },
+						{ label: '痛感带来的清醒', scores: { T: 1, M: 2 } },
+						{ label: '场景里的张力本身', scores: { V: 2 } },
+					]},
+					{ id: 3, text: '你对"信任"的态度？', options: [
+						{ label: '我给出信任，对方交出控制权', scores: { D: 2 } },
+						{ label: '我交出控制权，换取被接住', scores: { S: 2 } },
+						{ label: '信任是双向的，角色可以互换', scores: { SW: 2 } },
+						{ label: '信任让我能放心地承受', scores: { M: 2 } },
+						{ label: '信任让我能放心地施予', scores: { T: 2 } },
+					]},
+					{ id: 4, text: '你害怕的是？', options: [
+						{ label: '失控', scores: { D: 2 } },
+						{ label: '被抛弃', scores: { S: 1, M: 1 } },
+						{ label: '一直固定一个角色', scores: { SW: 2 } },
+						{ label: '没有边界感的场景', scores: { V: 2, T: 1 } },
+					]},
+					{ id: 5, text: '理想的深夜场景？', options: [
+						{ label: '我设规则，对方执行', scores: { D: 2 } },
+						{ label: '对方设规则，我执行', scores: { S: 2 } },
+						{ label: '痛感与快感并存', scores: { T: 1, M: 1 } },
+						{ label: '不一定要扮演，氛围够了', scores: { V: 2 } },
+						{ label: '看心情切换', scores: { SW: 2 } },
+					]},
+					{ id: 6, text: '在亲密关系里，你最享受的是？', options: [
+						{ label: '被信任地交出控制权', scores: { D: 2 } },
+						{ label: '被稳稳地接住', scores: { S: 2 } },
+						{ label: '施加有节制的痛感', scores: { T: 2 } },
+						{ label: '在痛感里被看见', scores: { M: 2 } },
+						{ label: '在两端游走的自由', scores: { SW: 2 } },
+						{ label: '关系结构的张力本身', scores: { V: 2 } },
+					]},
+				],
+			});
+		}
+
+		// POST /api/bdsm - 保存 BDSM 测试结果（不公开统计、不进主页）
+		if (url.pathname === '/api/bdsm' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const body = await request.json() as any;
+				const { code, name, scores } = body;
+				if (!code || !name || !scores) return jsonResponse({ error: 'Missing fields' }, 400);
+				await env.cforum_db.prepare(
+					'DELETE FROM bdsm_results WHERE user_id = ?'
+				).bind(userPayload.id).run();
+				await env.cforum_db.prepare(
+					'INSERT INTO bdsm_results (user_id, code, name, scores) VALUES (?, ?, ?, ?)'
+				).bind(userPayload.id, String(code), String(name), JSON.stringify(scores)).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/bdsm - 当前用户结果（仅自己可见）
+		if (url.pathname === '/api/bdsm' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const row = await env.cforum_db.prepare(
+					'SELECT code, name, scores, created_at FROM bdsm_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id).first<any>();
+				if (!row) return jsonResponse({ result: null });
+				return jsonResponse({
+					result: {
+						code: row.code,
+						name: row.name,
+						scores: JSON.parse(row.scores),
+						created_at: row.created_at,
+					},
 				});
 			} catch (e) {
 				return handleError(e);
