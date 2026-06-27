@@ -26,12 +26,12 @@ export function BdsmPage() {
 	const [data, setData] = React.useState<TypesPayload | null>(null);
 	const [current, setCurrent] = React.useState(0);
 	const [answers, setAnswers] = React.useState<number[]>([]);
-	const [result, setResult] = React.useState<{ main: BdsmType; scores: Record<string, number> } | null>(null);
+	const [result, setResult] = React.useState<{ main: BdsmType; topTypes: Array<{ type: BdsmType; score: number; pct: number }>; scores: Record<string, number> } | null>(null);
 	const [saved, setSaved] = React.useState(false);
 	const user = React.useMemo(() => getUser(), []);
 
 	React.useEffect(() => {
-		apiFetch('/bdsm/types').then((r) => r.json() as Promise<TypesPayload>).then(setData).catch(() => {});
+		apiFetch<TypesPayload>('/bdsm/types').then(setData).catch(() => {});
 	}, []);
 
 	function start() {
@@ -55,9 +55,13 @@ export function BdsmPage() {
 				}
 			}
 			const sorted = Object.entries(s).sort((a, b) => b[1] - a[1]);
-			const mainCode = sorted[0]?.[0] || 'V';
-			const main = data.types.find((t) => t.code === mainCode) || data.types[0];
-			setResult({ main, scores: s });
+			const maxScore = sorted[0]?.[1] || 1;
+			const topTypes = sorted.slice(0, 3).map(([code, sc]) => {
+				const type = data.types.find((t) => t.code === code) || data.types[0];
+				return { type, score: sc, pct: Math.round((sc / maxScore) * 100) };
+			});
+			const main = topTypes[0]?.type || data.types[0];
+			setResult({ main, topTypes, scores: s });
 			setStep('result');
 		}
 	}
@@ -159,16 +163,16 @@ export function BdsmPage() {
 		ctx.textAlign = 'left';
 		wrapText(ctx, result.main.desc, 140, 720, W - 280, 38);
 
-		// 分布条
+		// 分布条（Top 8，避免溢出）
 		ctx.textAlign = 'center';
 		ctx.fillStyle = '#9CA3AF';
 		ctx.font = '400 22px -apple-system';
-		ctx.fillText('维度分布', W / 2, 1000);
+		ctx.fillText('维度分布 · Top 8', W / 2, 1000);
 
-		const entries = Object.entries(result.scores).sort((a, b) => b[1] - a[1]);
+		const entries = Object.entries(result.scores).sort((a, b) => b[1] - a[1]).slice(0, 8);
 		const maxScore = Math.max(...entries.map((e) => e[1]), 1);
-		const segH = 30;
-		const segGap = 10;
+		const segH = 28;
+		const segGap = 8;
 		const startY = 1040;
 		entries.forEach(([code, sc], i) => {
 			const t = data?.types.find((x) => x.code === code);
@@ -183,10 +187,6 @@ export function BdsmPage() {
 			ctx.fillText(`${t.code} · ${t.name}`, W / 2 + 310, y + 22);
 			ctx.textAlign = 'center';
 		});
-
-		ctx.fillStyle = '#6B7280';
-		ctx.font = '400 20px -apple-system';
-		ctx.fillText('夜深了，你的是哪一种？', W / 2, 1280);
 
 		const link = document.createElement('a');
 		link.download = `sleepless-bdsm-${result.main.code}-${Date.now()}.png`;
@@ -254,7 +254,7 @@ export function BdsmPage() {
 							</p>
 							<div className="grid grid-cols-3 gap-2 pt-2">
 								{[
-									{ n: '6', l: '维度' },
+									{ n: String(data.types.length), l: '维度' },
 									{ n: String(data.questions.length), l: '道题' },
 									{ n: '私密', l: '仅自己可见' },
 								].map((x) => (
@@ -321,10 +321,36 @@ export function BdsmPage() {
 									</div>
 								</div>
 								<p className="text-sm leading-relaxed text-violet-100/80 font-serif">{result.main.desc}</p>
-							</CardContent>
-						</Card>
+						</CardContent>
+					</Card>
 
-						<Card className="border-rose-900/30 bg-[#0B0F1E] text-violet-50">
+					<Card className="border-rose-900/30 bg-gradient-to-br from-[#0B0F1E] to-[#13102B] text-violet-50">
+						<CardHeader>
+							<CardTitle className="text-sm font-normal text-violet-200/70">你的光谱 · Top 3</CardTitle>
+						</CardHeader>
+						<CardContent className="space-y-3">
+							{result.topTypes.map((tt, i) => (
+								<div key={tt.type.code} className="flex items-center gap-3">
+									<span className="font-serif text-2xl w-8 text-center" style={{ color: tt.type.color }}>
+										{i === 0 ? '①' : i === 1 ? '②' : '③'}
+									</span>
+									<div className="flex-1 min-w-0">
+										<div className="flex items-baseline gap-2">
+											<span className="font-serif text-base text-white">{tt.type.name}</span>
+											<span className="text-[10px] text-violet-300/50">{tt.type.code}</span>
+										</div>
+										<div className="text-[11px] italic text-violet-200/60 truncate">{tt.type.tagline}</div>
+										<div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-rose-900/30">
+											<div className="h-full rounded-full" style={{ width: `${tt.pct}%`, background: tt.type.color }} />
+										</div>
+									</div>
+									<span className="text-xs text-violet-300/50 w-8 text-right">{tt.pct}%</span>
+								</div>
+							))}
+						</CardContent>
+					</Card>
+
+					<Card className="border-rose-900/30 bg-[#0B0F1E] text-violet-50">
 							<CardHeader>
 								<CardTitle className="text-sm font-normal text-violet-200/70">维度分布</CardTitle>
 							</CardHeader>

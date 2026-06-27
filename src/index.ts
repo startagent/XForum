@@ -4,6 +4,7 @@ import { generateIdenticon } from './identicon';
 import { uploadImage, deleteImage, listAllKeys, getPublicUrl, getKeyFromUrl, S3Env } from './s3';
 import * as OTPAuth from 'otpauth';
 import { Security, UserPayload } from './security';
+import { BDSM_DISCLAIMER, BDSM_TYPES, BDSM_QUESTIONS } from './bdsm-data';
 
 interface DBUser {
     id: number;
@@ -1948,58 +1949,9 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 		// GET /api/bdsm/types - 公开：返回测试题与型定义
 		if (url.pathname === '/api/bdsm/types' && method === 'GET') {
 			return jsonResponse({
-				disclaimer: '本测试仅作自我探索用途，不鼓励任何非自愿行为。结果仅自己可见。',
-				types: [
-					{ code: 'D', name: '主导者', tagline: '你享受掌控的快感，也享受被信任的重量', desc: '你天生倾向主导。你享受掌控节奏、设定规则的快感。但你也明白：真正的权力，是对方愿意交出来。', color: '#E11D48' },
-					{ code: 'S', name: '服从者', tagline: '你享受交出去的轻松，也享受被接住的踏实', desc: '你倾向服从。在合适的信任里，你愿意交出控制权，让自己被引导。这并非软弱，是一种主动的让步。', color: '#3B82F6' },
-					{ code: 'T', name: '施虐者', tagline: '痛感是你的语言，节制是你的修养', desc: '你在控制的痛感中找到表达。你享受施予的瞬间，也懂得分寸。节制比强度更重要。', color: '#A855F7' },
-					{ code: 'M', name: '受虐者', tagline: '你从痛感里找到存在，从让渡里找到归属', desc: '你在被施加的痛感中找到存在感。这是一种古老的释放方式。它需要极大的信任，也带来极大的平静。', color: '#F472B6' },
-					{ code: 'SW', name: '切换者', tagline: '你在两端游走，看尽两个方向的风景', desc: '你是流动的。你既会主导也会服从，取决于对方和情境。这让你比单一角色更难被定义，也更难被满足。', color: '#FBBF24' },
-					{ code: 'V', name: '旁观者', tagline: '你享受氛围，多于参与', desc: '你更享受场景本身而不是角色扮演。你像一个观察者，被氛围、张力、关系结构所吸引。', color: '#64748B' },
-				],
-				questions: [
-					{ id: 1, text: '深夜独处时，你脑海里最常浮现的关系模式是？', options: [
-						{ label: '我在主导，对方在跟随', scores: { D: 2, T: 1 } },
-						{ label: '我在被引导，对方在掌控', scores: { S: 2, M: 1 } },
-						{ label: '看场景而变，两端都试过', scores: { SW: 2 } },
-						{ label: '更享受氛围，不一定要扮演', scores: { V: 2 } },
-					]},
-					{ id: 2, text: '让你最着迷的瞬间是？', options: [
-						{ label: '对方按我的节奏呼吸', scores: { D: 2 } },
-						{ label: '对方说"随你"', scores: { D: 1, T: 1 } },
-						{ label: '我被按住不能动的瞬间', scores: { S: 1, M: 2 } },
-						{ label: '痛感带来的清醒', scores: { T: 1, M: 2 } },
-						{ label: '场景里的张力本身', scores: { V: 2 } },
-					]},
-					{ id: 3, text: '你对"信任"的态度？', options: [
-						{ label: '我给出信任，对方交出控制权', scores: { D: 2 } },
-						{ label: '我交出控制权，换取被接住', scores: { S: 2 } },
-						{ label: '信任是双向的，角色可以互换', scores: { SW: 2 } },
-						{ label: '信任让我能放心地承受', scores: { M: 2 } },
-						{ label: '信任让我能放心地施予', scores: { T: 2 } },
-					]},
-					{ id: 4, text: '你害怕的是？', options: [
-						{ label: '失控', scores: { D: 2 } },
-						{ label: '被抛弃', scores: { S: 1, M: 1 } },
-						{ label: '一直固定一个角色', scores: { SW: 2 } },
-						{ label: '没有边界感的场景', scores: { V: 2, T: 1 } },
-					]},
-					{ id: 5, text: '理想的深夜场景？', options: [
-						{ label: '我设规则，对方执行', scores: { D: 2 } },
-						{ label: '对方设规则，我执行', scores: { S: 2 } },
-						{ label: '痛感与快感并存', scores: { T: 1, M: 1 } },
-						{ label: '不一定要扮演，氛围够了', scores: { V: 2 } },
-						{ label: '看心情切换', scores: { SW: 2 } },
-					]},
-					{ id: 6, text: '在亲密关系里，你最享受的是？', options: [
-						{ label: '被信任地交出控制权', scores: { D: 2 } },
-						{ label: '被稳稳地接住', scores: { S: 2 } },
-						{ label: '施加有节制的痛感', scores: { T: 2 } },
-						{ label: '在痛感里被看见', scores: { M: 2 } },
-						{ label: '在两端游走的自由', scores: { SW: 2 } },
-						{ label: '关系结构的张力本身', scores: { V: 2 } },
-					]},
-				],
+				disclaimer: BDSM_DISCLAIMER,
+				types: BDSM_TYPES,
+				questions: BDSM_QUESTIONS,
 			});
 		}
 
