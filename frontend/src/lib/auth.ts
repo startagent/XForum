@@ -6,6 +6,7 @@ export type User = {
 	role?: 'user' | 'admin';
 	totp_enabled?: boolean;
 	email_notifications?: boolean;
+	gender?: string | null;
 };
 
 const TOKEN_KEY = 'token';

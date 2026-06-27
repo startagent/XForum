@@ -13,6 +13,7 @@ export function RegisterPage() {
 	const [email, setEmail] = React.useState('');
 	const [username, setUsername] = React.useState('');
 	const [password, setPassword] = React.useState('');
+	const [gender, setGender] = React.useState<'' | 'female' | 'male'>('');
 	const [turnstileToken, setTurnstileToken] = React.useState('');
 	const [turnstileResetKey, setTurnstileResetKey] = React.useState(0);
 	const [loading, setLoading] = React.useState(false);
@@ -31,6 +32,10 @@ export function RegisterPage() {
 			setError('请完成验证码验证');
 			return;
 		}
+		if (!gender) {
+			setError('请选择身份（她的 / 他的）');
+			return;
+		}
 
 		setLoading(true);
 		try {
@@ -41,6 +46,7 @@ export function RegisterPage() {
 					email,
 					username,
 					password,
+					gender,
 					'cf-turnstile-response': turnstileToken
 				})
 			});
@@ -54,6 +60,7 @@ export function RegisterPage() {
 			setEmail('');
 			setUsername('');
 			setPassword('');
+			setGender('');
 			setTurnstileToken('');
 			setTurnstileResetKey((v) => v + 1);
 		} catch (err: any) {
@@ -112,6 +119,26 @@ export function RegisterPage() {
 									onChange={(e) => setPassword(e.target.value)}
 									required
 								/>
+							</div>
+
+							<div className="space-y-2">
+								<Label>身份 <span className="text-xs text-muted-foreground">（决定你能否在「晚妆」落字）</span></Label>
+								<div className="grid grid-cols-2 gap-2">
+									<button
+										type="button"
+										onClick={() => setGender('female')}
+										className={`rounded-md border px-3 py-2 text-sm transition ${gender === 'female' ? 'border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-200' : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted/60'}`}
+									>
+										她的
+									</button>
+									<button
+										type="button"
+										onClick={() => setGender('male')}
+										className={`rounded-md border px-3 py-2 text-sm transition ${gender === 'male' ? 'border-sky-500 bg-sky-500/10 text-sky-200' : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted/60'}`}
+									>
+										他的
+									</button>
+								</div>
 							</div>
 
 <TurnstileWidget enabled={turnstileActive} siteKey={siteKey} onToken={setTurnstileToken} resetKey={turnstileResetKey} />

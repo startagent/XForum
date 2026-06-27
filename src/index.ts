@@ -21,6 +21,7 @@ interface DBUser {
     pending_email?: string;
     verification_token?: string;
     email_change_token?: string;
+    gender?: string | null;
 }
 
 interface PostAuthorInfo {
@@ -148,19 +149,49 @@ export default {
 			});
 		};
 
-		// Serve R2 objects through Worker when using bucket binding
+		// Serve R2/B2 objects through Worker (R2 binding or S3-compatible fallback)
 		if (url.pathname.startsWith('/r2/') && (method === 'GET' || method === 'HEAD')) {
-			const bucket = (env as any).BUCKET as R2Bucket | undefined;
-			if (!bucket) return new Response('R2 bucket not configured', { status: 404 });
 			const key = decodeURIComponent(url.pathname.slice('/r2/'.length));
 			if (!key) return new Response('Not Found', { status: 404 });
-			const object = await bucket.get(key);
-			if (!object) return new Response('Not Found', { status: 404 });
-			const headers = new Headers();
-			object.writeHttpMetadata(headers);
-			if (object.httpEtag) headers.set('etag', object.httpEtag);
-			headers.set('Cache-Control', 'public, max-age=3600');
-			return new Response(method === 'HEAD' ? null : object.body, { headers });
+
+			// 1. Try R2 binding first
+			const bucket = (env as any).BUCKET as R2Bucket | undefined;
+			if (bucket) {
+				const object = await bucket.get(key);
+				if (!object) return new Response('Not Found', { status: 404 });
+				const headers = new Headers();
+				object.writeHttpMetadata(headers);
+				if (object.httpEtag) headers.set('etag', object.httpEtag);
+				headers.set('Cache-Control', 'public, max-age=2592000');
+				return new Response(method === 'HEAD' ? null : object.body, { headers });
+			}
+
+			// 2. Fall back to S3-compatible storage (e.g. B2 Private bucket)
+			const s3Env = env as any;
+			if (s3Env.AWS_ENDPOINT && s3Env.AWS_BUCKET && s3Env.AWS_ACCESS_KEY_ID && s3Env.AWS_SECRET_ACCESS_KEY) {
+				const { AwsClient } = await import('aws4fetch');
+				const s3 = new AwsClient({
+					accessKeyId: s3Env.AWS_ACCESS_KEY_ID,
+					secretAccessKey: s3Env.AWS_SECRET_ACCESS_KEY,
+					region: s3Env.AWS_REGION,
+					service: 's3',
+				});
+				const endpoint = s3Env.AWS_ENDPOINT.replace(/\/+$/, '');
+				const objectUrl = `${endpoint}/${s3Env.AWS_BUCKET}/${key}`;
+				const upstream = await s3.fetch(objectUrl, { method });
+				if (!upstream.ok) {
+					return new Response(`Object fetch failed: ${upstream.status}`, { status: upstream.status });
+				}
+				const headers = new Headers(upstream.headers);
+				headers.set('Cache-Control', 'public, max-age=2592000');
+				headers.set('Access-Control-Allow-Origin', corsHeaders['Access-Control-Allow-Origin'] || '*');
+				return new Response(method === 'HEAD' ? null : upstream.body, {
+					status: upstream.status,
+					headers,
+				});
+			}
+
+			return new Response('Storage not configured', { status: 404 });
 		}
 
 		// Ensure the database schema exists before anything else.
@@ -196,6 +227,9 @@ export default {
 				`CREATE TABLE IF NOT EXISTS categories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL UNIQUE,
+  slug TEXT,
+  description TEXT,
+  icon TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
 				`CREATE TABLE IF NOT EXISTS posts (
@@ -255,7 +289,46 @@ export default {
   ip_address TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );`,
+				`CREATE TABLE IF NOT EXISTS soul_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  tone TEXT,
+  contrast_level INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS enneagram_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type_code INTEGER NOT NULL,
+  type_name TEXT NOT NULL,
+  wing_code INTEGER,
+  wing_name TEXT,
+  scores TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
 				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
+				// 雅痞化板块命名 + 描述
+				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜笺', 'notes', '枕边的字，写给自己，也写给不想睡的人', 'moon');`,
+				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('私语', 'treehole', '说给不会说出去的人听，他若听见，便算你赢', 'lock');`,
+				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('晚妆', 'gaze', '妆化好了，灯也调低了，只差一个不在场的人', 'eye');`,
+				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('心相', 'soul', '灵魂的另一面，留在这里，等一个认得的人', 'sparkles');`,
+				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜会', 'salon', '留个暗号，等一个人对上来', 'flame');`,
+				// 已存在的板块做更新（重命名 + 描述升级）
+				`UPDATE categories SET name='夜笺', description='枕边的字，写给自己，也写给不想睡的人', icon='moon' WHERE slug='notes';`,
+				`UPDATE categories SET name='私语', description='说给不会说出去的人听，他若听见，便算你赢', icon='lock' WHERE slug='treehole';`,
+				`UPDATE categories SET name='晚妆', description='妆化好了，灯也调低了，只差一个不在场的人', icon='eye' WHERE slug='gaze';`,
+				`UPDATE categories SET name='心相', description='灵魂的另一面，留在这里，等一个认得的人', icon='sparkles' WHERE slug='soul';`,
+				`UPDATE categories SET name='夜会', description='留个暗号，等一个人对上来', icon='flame' WHERE slug='salon';`,
+				// users 表加 gender 字段（向后兼容）
+				`ALTER TABLE users ADD COLUMN gender TEXT;`,
+				// soul_results 表加 tone / contrast_level 字段（向后兼容，重复执行会报错但被 catch）
+				`ALTER TABLE soul_results ADD COLUMN tone TEXT;`,
+				`ALTER TABLE soul_results ADD COLUMN contrast_level INTEGER;`,
 				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES 
 ('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
 			];
@@ -540,22 +613,35 @@ export default {
 						avatar_url: user.avatar_url,
 						role: user.role || 'user',
 						totp_enabled: !!user.totp_enabled,
-						email_notifications: user.email_notifications === 1
-					}
-				});
-			} catch (e) {
-				return handleError(e);
-			}
+					email_notifications: user.email_notifications === 1,
+					gender: user.gender || null
+				}
+			});
+		} catch (e) {
+			return handleError(e);
 		}
+	}
 
 		// POST /api/user/profile
 		if (url.pathname === '/api/user/profile' && method === 'POST') {
 			try {
 				const userPayload = await authenticate(request);
 				const body = await request.json() as any;
-				const { username, avatar_url, email_notifications } = body;
+				const { username, avatar_url, email_notifications, gender } = body;
 				
 				const user_id = userPayload.id;
+
+				// Validate gender if provided
+				let newGender: string | null | undefined = undefined;
+				if (gender !== undefined) {
+					if (gender === '' || gender === null) {
+						newGender = null;
+					} else if (gender === 'female' || gender === 'male') {
+						newGender = gender;
+					} else {
+						return jsonResponse({ error: 'Invalid gender value' }, 400);
+					}
+				}
 
 				if (username) {
 					if (username.length > 20) return jsonResponse({ error: 'Username too long (Max 20 chars)' }, 400);
@@ -598,8 +684,13 @@ export default {
 					newEmailNotif = email_notifications ? 1 : 0;
 				}
 
-				await env.cforum_db.prepare('UPDATE users SET username = ?, avatar_url = ?, email_notifications = ? WHERE id = ?')
-					.bind(newUsername, newAvatarUrl, newEmailNotif, user_id).run();
+				if (newGender !== undefined) {
+					await env.cforum_db.prepare('UPDATE users SET username = ?, avatar_url = ?, email_notifications = ?, gender = ? WHERE id = ?')
+						.bind(newUsername, newAvatarUrl, newEmailNotif, newGender, user_id).run();
+				} else {
+					await env.cforum_db.prepare('UPDATE users SET username = ?, avatar_url = ?, email_notifications = ? WHERE id = ?')
+						.bind(newUsername, newAvatarUrl, newEmailNotif, user_id).run();
+				}
 
 			const user = await env.cforum_db.prepare('SELECT * FROM users WHERE id = ?').bind(user_id).first<DBUser>();
 			if (!user) return jsonResponse({ error: 'User not found' }, 404);
@@ -612,7 +703,8 @@ export default {
 						avatar_url: user.avatar_url,
 						role: user.role || 'user',
 						totp_enabled: !!user.totp_enabled,
-						email_notifications: user.email_notifications === 1
+						email_notifications: user.email_notifications === 1,
+						gender: user.gender || null
 					}
 				});
 			} catch (e) {
@@ -1005,8 +1097,22 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 		// GET /api/categories
 		if (url.pathname === '/api/categories' && method === 'GET') {
 			try {
-				const { results } = await env.cforum_db.prepare('SELECT * FROM categories ORDER BY created_at ASC').all();
+				const { results } = await env.cforum_db.prepare('SELECT id, name, slug, description, icon, created_at FROM categories ORDER BY id ASC').all();
 				return jsonResponse(results);
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/square/:slug - 获取板块信息
+		if (url.pathname.startsWith('/api/square/') && method === 'GET') {
+			try {
+				const slug = url.pathname.slice('/api/square/'.length);
+				const row = await env.cforum_db.prepare(
+					'SELECT id, name, slug, description, icon FROM categories WHERE slug = ?'
+				).bind(slug).first<any>();
+				if (!row) return jsonResponse({ error: 'Square not found' }, 404);
+				return jsonResponse(row);
 			} catch (e) {
 				return handleError(e);
 			}
@@ -1422,10 +1528,13 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 					return jsonResponse({ error: 'Turnstile verification failed' }, 403);
 				}
 
-				const { email, username, password } = body;
+				const { email, username, password, gender } = body;
 				if (!email || !username || !password) {
 					return jsonResponse({ error: 'Missing email, username or password' }, 400);
 				}
+
+				// Validate gender (optional, only 'female' or 'male' allowed)
+				const safeGender = (gender === 'female' || gender === 'male') ? gender : null;
 
 				if (email.length > 50) return jsonResponse({ error: 'Email too long (Max 50 chars)' }, 400);
 
@@ -1471,8 +1580,8 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 				}
 
 				const { success, meta } = await env.cforum_db.prepare(
-					'INSERT INTO users (email, username, password, role, verified, verification_token) VALUES (?, ?, ?, "user", 0, ?)'
-				).bind(email, username, passwordHash, verificationToken).run();
+					'INSERT INTO users (email, username, password, role, verified, verification_token, gender) VALUES (?, ?, ?, "user", 0, ?, ?)'
+				).bind(email, username, passwordHash, verificationToken, safeGender).run();
 
 				if (success) {
 					// Generate Default Avatar (Identicon)
@@ -1521,7 +1630,201 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 			}
 		}
 
-		// GET /users
+		// POST /api/soul - 保存灵魂测定结果
+		if (url.pathname === '/api/soul' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const body = await request.json() as any;
+				const { code, name, scores, tone, contrast_level } = body;
+				if (!code || !name || !scores) {
+					return jsonResponse({ error: 'Missing fields' }, 400);
+				}
+				// 保留最近一条，旧的删除（可选：保留历史）
+				await env.cforum_db.prepare(
+					'DELETE FROM soul_results WHERE user_id = ?'
+				).bind(userPayload.id).run();
+				await env.cforum_db.prepare(
+					'INSERT INTO soul_results (user_id, code, name, scores, tone, contrast_level) VALUES (?, ?, ?, ?, ?, ?)'
+				).bind(
+					userPayload.id,
+					String(code),
+					String(name),
+					JSON.stringify(scores),
+					tone ? String(tone) : null,
+					typeof contrast_level === 'number' ? contrast_level : null
+				).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul - 获取当前用户的灵魂测定结果
+		if (url.pathname === '/api/soul' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const row = await env.cforum_db.prepare(
+					'SELECT code, name, scores, tone, contrast_level, created_at FROM soul_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id).first<any>();
+				if (!row) return jsonResponse({ result: null });
+				return jsonResponse({
+					result: {
+						code: row.code,
+						name: row.name,
+						scores: JSON.parse(row.scores),
+						tone: row.tone,
+						contrast_level: row.contrast_level,
+						created_at: row.created_at,
+					},
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul/types - 公开：返回所有灵魂类型/底色/等级定义（供首页展示）
+		if (url.pathname === '/api/soul/types' && method === 'GET') {
+			return jsonResponse({
+				soul_types: [
+					{ code: 'FL', name: '炽夜玫瑰', tagline: '夜里盛放，被注视才完整', color: '#E11D48' },
+					{ code: 'NH', name: '暗夜猎手', tagline: '不是被注视，是你在挑选', color: '#9D174D' },
+					{ code: 'SR', name: '书房尤物', tagline: '读着严肃的书，写着潮湿的字', color: '#B45309' },
+					{ code: 'IS', name: '私语者', tagline: '把欲望说给不会说出去的人', color: '#6366F1' },
+					{ code: 'MB', name: '镜中困兽', tagline: '想被看见，又害怕被看穿', color: '#A21CAF' },
+					{ code: 'MO', name: '月下凝眸', tagline: '渴望被注视，又害怕被看穿', color: '#F59E0B' },
+					{ code: 'ST', name: '静水深流', tagline: '理性是表象，深海在底下', color: '#64748B' },
+					{ code: 'TW', name: '薄暮之人', tagline: '白天与夜晚之间的过渡带', color: '#8B5CF6' },
+				],
+				tones: [
+					{ code: 'ash', name: '晨灰', hex: '#9CA3AF' },
+					{ code: 'gold', name: '午金', hex: '#F59E0B' },
+					{ code: 'dusk', name: '暮紫', hex: '#A855F7' },
+					{ code: 'ink', name: '夜墨', hex: '#1E1B4B' },
+					{ code: 'rose', name: '欲红', hex: '#E11D48' },
+					{ code: 'blue', name: '寂蓝', hex: '#3B82F6' },
+				],
+				contrast_levels: [
+					{ level: 0, label: '端庄', desc: '你是白天的代名词，但夜还没真正来过' },
+					{ level: 1, label: '微光', desc: '端庄开始松动，偶尔有一丝缝隙' },
+					{ level: 2, label: '薄暮', desc: '你正站在白天与夜晚的过渡带' },
+					{ level: 3, label: '暗涌', desc: '表面平静，底下已经有人在下坠' },
+					{ level: 4, label: '反差', desc: '白天与夜晚是两个你，你自己也分不清' },
+					{ level: 5, label: '炽夜', desc: '你已经醒了，并且不再想回去' },
+				],
+			});
+		}
+
+		// GET /api/soul/stats - 公开：返回统计（参与人数 + 各类型分布）
+		if (url.pathname === '/api/soul/stats' && method === 'GET') {
+			try {
+				const totalRow = await env.cforum_db.prepare(
+					'SELECT COUNT(*) as c FROM soul_results'
+				).first<any>();
+				const distRows = await env.cforum_db.prepare(
+					'SELECT code, name, COUNT(*) as c FROM soul_results GROUP BY code ORDER BY c DESC'
+				).all<any>();
+				const toneRows = await env.cforum_db.prepare(
+					'SELECT tone, COUNT(*) as c FROM soul_results WHERE tone IS NOT NULL GROUP BY tone ORDER BY c DESC'
+				).all<any>();
+				return jsonResponse({
+					total: totalRow?.c || 0,
+					by_type: (distRows.results || []).map((r: any) => ({ code: r.code, name: r.name, count: r.c })),
+					by_tone: (toneRows.results || []).map((r: any) => ({ tone: r.tone, count: r.c })),
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// ===== 九型人格（Enneagram）接口 =====
+
+		// GET /api/enneagram/types - 公开：9 型定义
+		if (url.pathname === '/api/enneagram/types' && method === 'GET') {
+			return jsonResponse({
+				types: [
+					{ code: 1, name: '戒律者', tagline: '白天的规矩，夜里还在守', desc: '你有一个不肯妥协的内核。白天你为规矩而活，夜里你为完美的幻影而醒。你最大的痛苦是——世界总不达标。' },
+					{ code: 2, name: '供养者', tagline: '给所有人光，自己摸黑', desc: '你的爱是主动的、是溢出的。你给所有人光，却很少让自己被看见。夜深时你会问：我这样付出，谁会来接住我？' },
+					{ code: 3, name: '聚光灯', tagline: '镜头停不下，夜里也妆没卸', desc: '你是别人眼里的成功者。你习惯了被注视，也害怕不被注视。夜里卸妆那一刻，你最陌生。' },
+					{ code: 4, name: '孤本', tagline: '与众不同的痛，与众不同的美', desc: '你活在一种独特的缺失感里。别人有的你不稀罕，你要的别人给不了。你的悲剧感是你的美学。' },
+					{ code: 5, name: '壁上观', tagline: '看透一切，包括自己的孤独', desc: '你站在世界之外观察世界。你不缺知识，你缺的是——一个让你愿意走下来的理由。' },
+					{ code: 6, name: '守夜人', tagline: '怀疑一切，但仍守着一个位置', desc: '你疑心很重，但忠诚更深。你夜里醒着，是因为你在守一个不确定是否值得的位置。' },
+					{ code: 7, name: '浪子', tagline: '尝遍世间，唯独不尝自己', desc: '你用新鲜感逃避痛。你什么都尝过，唯独不肯尝自己内心那个洞。夜深了，洞还在。' },
+					{ code: 8, name: '执剑', tagline: '白天的王，夜晚的困兽', desc: '你掌控一切，因为害怕被掌控。白天你是王，夜晚你是一只不肯承认自己困的兽。' },
+					{ code: 9, name: '薄雾', tagline: '谁都不得罪，自己也消失了', desc: '你太擅长和谐了。你把所有棱角都磨平，最后把自己也磨没了。夜里你想不起自己是谁。' },
+				],
+			});
+		}
+
+		// POST /api/enneagram - 保存九型测定结果
+		if (url.pathname === '/api/enneagram' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const body = await request.json() as any;
+				const { type_code, type_name, wing_code, wing_name, scores } = body;
+				if (!type_code || !type_name || !scores) {
+					return jsonResponse({ error: 'Missing fields' }, 400);
+				}
+				await env.cforum_db.prepare(
+					'DELETE FROM enneagram_results WHERE user_id = ?'
+				).bind(userPayload.id).run();
+				await env.cforum_db.prepare(
+					'INSERT INTO enneagram_results (user_id, type_code, type_name, wing_code, wing_name, scores) VALUES (?, ?, ?, ?, ?, ?)'
+				).bind(
+					userPayload.id,
+					Number(type_code),
+					String(type_name),
+					wing_code ? Number(wing_code) : null,
+					wing_name ? String(wing_name) : null,
+					JSON.stringify(scores)
+				).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/enneagram - 获取当前用户九型结果
+		if (url.pathname === '/api/enneagram' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const row = await env.cforum_db.prepare(
+					'SELECT type_code, type_name, wing_code, wing_name, scores, created_at FROM enneagram_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id).first<any>();
+				if (!row) return jsonResponse({ result: null });
+				return jsonResponse({
+					result: {
+						type_code: row.type_code,
+						type_name: row.type_name,
+						wing_code: row.wing_code,
+						wing_name: row.wing_name,
+						scores: JSON.parse(row.scores),
+						created_at: row.created_at,
+					},
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/enneagram/stats - 公开：九型分布
+		if (url.pathname === '/api/enneagram/stats' && method === 'GET') {
+			try {
+				const totalRow = await env.cforum_db.prepare(
+					'SELECT COUNT(*) as c FROM enneagram_results'
+				).first<any>();
+				const distRows = await env.cforum_db.prepare(
+					'SELECT type_code, type_name, COUNT(*) as c FROM enneagram_results GROUP BY type_code ORDER BY type_code ASC'
+				).all<any>();
+				return jsonResponse({
+					total: totalRow?.c || 0,
+					by_type: (distRows.results || []).map((r: any) => ({ code: r.type_code, name: r.type_name, count: r.c })),
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/users
 		if (url.pathname === '/api/users' && method === 'GET') {
 			try {
 				const { results } = await env.cforum_db.prepare(
@@ -1545,6 +1848,35 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 		}
 
 		// GET /posts
+		// GET /api/posts/featured - 今夜精选：关联灵魂测定结果，按反差等级 + 点赞排序
+		if (url.pathname === '/api/posts/featured' && method === 'GET') {
+			try {
+				const limit = Math.min(parseInt(url.searchParams.get('limit') || '6'), 20);
+				// JOIN soul_results 拿到作者的反差等级；没测过的给 -1（排后）
+				// 仅取最近 7 天、未匿名的帖子
+				const rows = await env.cforum_db.prepare(
+					`SELECT p.id, p.title, p.excerpt, p.category_id, p.author_id, p.created_at,
+						p.likes_count, p.comments_count, p.views_count,
+						u.username, u.avatar_url,
+						c.name as category_name, c.slug as category_slug,
+						sr.contrast_level, sr.code as soul_code, sr.name as soul_name
+					 FROM posts p
+					 LEFT JOIN users u ON u.id = p.author_id
+					 LEFT JOIN categories c ON c.id = p.category_id
+					 LEFT JOIN soul_results sr ON sr.user_id = p.author_id
+					 WHERE p.deleted_at IS NULL
+						AND p.created_at >= datetime('now', '-7 days')
+						AND (p.is_anonymous IS NULL OR p.is_anonymous = 0)
+						AND p.views_count > 5
+					 ORDER BY COALESCE(sr.contrast_level, -1) DESC, p.likes_count DESC, p.views_count DESC
+					 LIMIT ?`
+				).bind(limit).all<any>();
+				return jsonResponse({ posts: rows.results || [] });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
 		if (url.pathname === '/api/posts' && method === 'GET') {
 			try {
 				const limit = parseInt(url.searchParams.get('limit') || '20');
@@ -1870,8 +2202,15 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 
 				// Validate Category
 				if (category_id) {
-					const category = await env.cforum_db.prepare('SELECT id FROM categories WHERE id = ?').bind(category_id).first();
+					const category = await env.cforum_db.prepare('SELECT id, slug FROM categories WHERE id = ?').bind(category_id).first<any>();
 					if (!category) return jsonResponse({ error: 'Category not found' }, 400);
+					// 「晚妆」板块限女性发帖（男性可看可点赞，不可发）
+					if (category.slug === 'gaze') {
+						const author = await env.cforum_db.prepare('SELECT gender FROM users WHERE id = ?').bind(userPayload.id).first<any>();
+						if (!author || author.gender !== 'female') {
+							return jsonResponse({ error: '晚妆是她的妆台，男士请到一旁欣赏' }, 403);
+						}
+					}
 				}
 
 				const { success } = await env.cforum_db.prepare(

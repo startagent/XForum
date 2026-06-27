@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Eye, EyeOff, Heart, MessageCircle, MoreVertical, Pin, RefreshCw, Search, Shield, Trash2, User, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Compass, Eye, EyeOff, Flame, Heart, Lock, MessageCircle, Moon, MoreVertical, Pin, RefreshCw, Search, Shield, Sparkles, Trash2, User, X, ArrowRight } from 'lucide-react';
 
 import { TurnstileWidget } from '@/components/turnstile';
 import { PageShell } from '@/components/page-shell';
@@ -13,6 +13,39 @@ import { apiFetch, formatDate, getSecurityHeaders, type Category, type Post } fr
 import { getToken, getUser } from '@/lib/auth';
 import { attachFancybox, highlightCodeBlocks, renderMarkdownToHtml } from '@/lib/markdown';
 import { validateText } from '@/lib/validators';
+
+// 8 种灵魂人格（与后端 /api/soul/types 对应）
+const SOUL_TYPES_PREVIEW = [
+	{ code: 'FL', name: '炽夜玫瑰', color: '#E11D48' },
+	{ code: 'NH', name: '暗夜猎手', color: '#9D174D' },
+	{ code: 'SR', name: '书房尤物', color: '#B45309' },
+	{ code: 'IS', name: '私语者', color: '#6366F1' },
+	{ code: 'MB', name: '镜中困兽', color: '#A21CAF' },
+	{ code: 'MO', name: '月下凝眸', color: '#F59E0B' },
+	{ code: 'ST', name: '静水深流', color: '#64748B' },
+	{ code: 'TW', name: '薄暮之人', color: '#8B5CF6' },
+];
+
+const TONES_PREVIEW = [
+	{ code: 'ash', name: '晨灰', hex: '#9CA3AF' },
+	{ code: 'gold', name: '午金', hex: '#F59E0B' },
+	{ code: 'dusk', name: '暮紫', hex: '#A855F7' },
+	{ code: 'ink', name: '夜墨', hex: '#1E1B4B' },
+	{ code: 'rose', name: '欲红', hex: '#E11D48' },
+	{ code: 'blue', name: '寂蓝', hex: '#3B82F6' },
+];
+
+const CONTRAST_LEVELS = ['端庄', '微光', '薄暮', '暗涌', '反差', '炽夜'];
+
+function soul_name_badge(name: string | null): React.ReactNode {
+	if (!name) return null;
+	return (
+		<span className="ml-auto flex items-center gap-1 text-fuchsia-300/70">
+			<Sparkles className="h-3 w-3" />
+			{name}
+		</span>
+	);
+}
 
 export function IndexPage() {
 	const { config } = useConfig();
@@ -40,6 +73,29 @@ export function IndexPage() {
 	const [createError, setCreateError] = React.useState('');
 	const [uploadLoading, setUploadLoading] = React.useState(false);
 	const [uploadError, setUploadError] = React.useState('');
+
+	// 灵魂测定统计（公开数据，用于首页灯火墙）
+	const [soulStats, setSoulStats] = React.useState<{ total: number; by_type: Array<{ code: string; name: string; count: number }>; by_tone: Array<{ tone: string; count: number }> } | null>(null);
+
+	// 今夜精选：按反差等级 + 点赞排序的帖子
+	type FeaturedPost = {
+		id: number; title: string; excerpt: string | null;
+		category_slug: string; category_name: string;
+		author_id: number; username: string; avatar_url: string | null;
+		likes_count: number; comments_count: number; views_count: number;
+		contrast_level: number | null; soul_name: string | null;
+		created_at: string;
+	};
+	const [featured, setFeatured] = React.useState<FeaturedPost[]>([]);
+
+	React.useEffect(() => {
+		apiFetch<{ total: number; by_type: Array<{ code: string; name: string; count: number }>; by_tone: Array<{ tone: string; count: number }> }>('/soul/stats')
+			.then(setSoulStats)
+			.catch(() => {});
+		apiFetch<{ posts: FeaturedPost[] }>('/posts/featured?limit=6')
+			.then((r) => setFeatured(r.posts || []))
+			.catch(() => {});
+	}, []);
 
 	// insert text at current cursor position in the textarea (or append)
 	function insertIntoContent(insertText: string) {
@@ -518,12 +574,239 @@ export function IndexPage() {
 
 	return (
 		<PageShell>
+			{/* Hero Section - 未眠品牌视觉 */}
+			<section className="relative overflow-hidden rounded-xl border border-violet-900/30 bg-gradient-to-br from-[#0B0F1E] via-[#13102B] to-[#1A0B2E] px-6 py-10 sm:px-12 sm:py-14">
+				<div className="pointer-events-none absolute inset-0 opacity-30" aria-hidden>
+					<div className="absolute -top-10 -right-10 h-48 w-48 rounded-full bg-violet-600/20 blur-3xl" />
+					<div className="absolute -bottom-10 -left-10 h-56 w-56 rounded-full bg-amber-500/10 blur-3xl" />
+				</div>
+				<div className="relative space-y-4">
+					<div className="inline-flex items-center gap-2 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-[11px] tracking-[0.2em] text-violet-200 uppercase">
+						<span className="h-1.5 w-1.5 rounded-full bg-amber-300 shadow-[0_0_8px_2px_rgba(252,211,77,0.7)]" />
+						Sleepless · 未眠
+					</div>
+					<h1 className="font-serif text-4xl sm:text-5xl tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-white via-violet-100 to-amber-100">
+						夜深了，另一个你醒着。
+					</h1>
+					<p className="max-w-xl text-sm sm:text-base leading-relaxed text-violet-100/70">
+						白天的端庄留给世界，夜晚的未眠留给自己。
+						<br />
+						在这里，把不能说的，说给不会说出去的人。
+					</p>
+					<div className="flex flex-wrap items-center gap-3 pt-2">
+					<a
+						href="/soul.html"
+						className="inline-flex items-center gap-2 rounded-md bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-violet-900/40 transition hover:from-violet-500 hover:to-fuchsia-500"
+					>
+						<Sparkles className="h-4 w-4" />
+						测一测今夜的你
+					</a>
+					<a
+						href="/register.html"
+						className="inline-flex items-center gap-2 rounded-md border border-violet-400/30 bg-white/5 px-4 py-2 text-sm text-violet-100 backdrop-blur transition hover:bg-white/10"
+					>
+						成为未眠者
+						<ArrowRight className="h-3.5 w-3.5" />
+					</a>
+				</div>
+
+				{/* 灯火墙 · 实时数据条 */}
+				<div className="mt-6 grid grid-cols-3 gap-3 border-t border-violet-500/10 pt-4 text-center">
+					<div>
+						<div className="font-serif text-2xl text-amber-200">{soulStats?.total ?? '—'}</div>
+						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">已测灵魂</div>
+					</div>
+					<div>
+						<div className="font-serif text-2xl text-fuchsia-200">8</div>
+						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">小众人格</div>
+					</div>
+					<div>
+						<div className="font-serif text-2xl text-violet-200">L0-L5</div>
+						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">反差等级</div>
+					</div>
+				</div>
+				</div>
+			</section>
+
+			{/* 灵魂测定入口卡 · 引流利器 */}
+			<section className="relative overflow-hidden rounded-xl border border-fuchsia-900/30 bg-gradient-to-br from-[#1A0B2E] via-[#2A0B3E] to-[#1A0B1E] p-5 sm:p-7">
+				<div className="pointer-events-none absolute inset-0 opacity-40" aria-hidden>
+					<div className="absolute -top-10 right-1/4 h-40 w-40 rounded-full bg-fuchsia-500/20 blur-3xl" />
+					<div className="absolute -bottom-10 left-1/4 h-40 w-40 rounded-full bg-amber-500/10 blur-3xl" />
+				</div>
+				<div className="relative grid gap-5 sm:grid-cols-[1fr_auto] sm:items-center">
+					<div className="space-y-2">
+						<div className="inline-flex items-center gap-2 rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1 text-[11px] tracking-[0.2em] text-fuchsia-200 uppercase">
+							<Sparkles className="h-3 w-3" />
+							Soul Test · 灵魂测定
+						</div>
+						<h2 className="font-serif text-2xl sm:text-3xl text-transparent bg-clip-text bg-gradient-to-r from-white via-fuchsia-100 to-amber-100">
+							今夜的你，是哪一种灵魂？
+						</h2>
+						<p className="max-w-xl text-sm leading-relaxed text-fuchsia-100/70">
+							十题问答，测出三种结果：<span className="text-fuchsia-200">小众人格</span>、<span className="text-sky-200">今日底色</span>、<span className="text-amber-200">反差等级</span>。
+							<br />
+							测完可分享，作为外站引流的暗号。
+						</p>
+					</div>
+					<a
+						href="/soul.html"
+						className="inline-flex items-center gap-2 self-start rounded-md bg-gradient-to-r from-fuchsia-600 to-rose-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg shadow-fuchsia-900/40 transition hover:from-fuchsia-500 hover:to-rose-500 sm:self-auto"
+					>
+						开始测定
+						<ArrowRight className="h-4 w-4" />
+					</a>
+					<a
+						href="/enneagram.html"
+						className="inline-flex items-center gap-2 self-start rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-200 backdrop-blur transition hover:bg-amber-500/10 sm:self-auto"
+					>
+						<Compass className="h-4 w-4" />
+						九型夜人格
+					</a>
+				</div>
+
+				{/* 8 人格预览 */}
+				<div className="relative mt-5 grid grid-cols-4 gap-2 border-t border-fuchsia-500/10 pt-4 sm:grid-cols-8">
+					{SOUL_TYPES_PREVIEW.map((s) => (
+						<div key={s.code} className="text-center">
+							<div
+								className="mx-auto mb-1 h-2 w-2 rounded-full"
+								style={{ background: s.color, boxShadow: `0 0 8px 1px ${s.color}80` }}
+							/>
+							<div className="truncate text-[10px] text-violet-100/70">{s.name}</div>
+						</div>
+					))}
+				</div>
+
+				{/* 6 底色 + 反差等级 */}
+				<div className="relative mt-4 flex flex-wrap items-center justify-between gap-3">
+					<div className="flex items-center gap-2">
+						<span className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">今日底色</span>
+						<div className="flex items-center gap-1.5">
+							{TONES_PREVIEW.map((t) => (
+								<div
+									key={t.code}
+									className="h-4 w-4 rounded-full"
+									style={{ background: t.hex }}
+									title={t.name}
+								/>
+							))}
+						</div>
+					</div>
+					<div className="flex items-center gap-2">
+						<span className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">反差等级</span>
+						<div className="flex items-center gap-1">
+							{CONTRAST_LEVELS.map((l, i) => (
+								<span key={l} className="text-[10px] text-violet-100/60">
+									{i > 0 ? <span className="text-violet-500/40 mx-0.5">·</span> : null}
+									{l}
+								</span>
+							))}
+						</div>
+					</div>
+				</div>
+
+				{/* 灵魂分布（如有数据） */}
+				{soulStats && soulStats.by_type.length > 0 ? (
+					<div className="relative mt-4 border-t border-fuchsia-500/10 pt-3">
+						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase mb-2">今夜的灵魂分布</div>
+						<div className="flex h-2 w-full overflow-hidden rounded-full bg-violet-900/30">
+							{soulStats.by_type.map((t) => {
+								const meta = SOUL_TYPES_PREVIEW.find((s) => s.code === t.code);
+								const total = soulStats.total || 1;
+								const pct = (t.count / total) * 100;
+								return (
+									<div
+										key={t.code}
+										style={{ width: `${pct}%`, background: meta?.color || '#6366F1' }}
+										title={`${t.name}: ${t.count}`}
+									/>
+								);
+							})}
+						</div>
+					</div>
+				) : null}
+			</section>
 			<div className="space-y-6">
 				{banner ? <div className="rounded-md border bg-muted/40 p-3 text-sm">{banner}</div> : null}
+
+			{/* 今夜精选 · 按反差等级排序 */}
+			{featured.length > 0 ? (
+				<section className="space-y-3">
+					<div className="flex items-baseline justify-between">
+						<h2 className="font-serif text-lg text-violet-100">
+							今夜精选
+							<span className="ml-2 text-[11px] font-normal text-violet-300/50">按反差等级 · 夜里更新</span>
+						</h2>
+					</div>
+					<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+						{featured.map((p) => (
+							<a
+								key={p.id}
+								href={`/post/${p.id}.html`}
+								className="group relative overflow-hidden rounded-lg border border-violet-900/30 bg-gradient-to-br from-[#0B0F1E]/90 to-[#13102B]/90 p-4 backdrop-blur transition hover:border-violet-400/50 hover:shadow-lg hover:shadow-violet-900/20"
+							>
+								{/* 反差等级角标 */}
+								{p.contrast_level != null ? (
+									<div className="absolute right-3 top-3 flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-200">
+										<Flame className="h-3 w-3" />
+										L{p.contrast_level}
+									</div>
+								) : null}
+								<div className="mb-2 text-[11px] text-violet-300/60">{p.category_name}</div>
+								<h3 className="line-clamp-2 font-serif text-sm text-violet-50 group-hover:text-white">
+									{p.title}
+								</h3>
+								{p.excerpt ? (
+									<p className="mt-1.5 line-clamp-2 text-xs text-violet-200/60">{p.excerpt}</p>
+								) : null}
+								<div className="mt-3 flex items-center gap-3 text-[10px] text-violet-300/50">
+									<span className="flex items-center gap-1">
+										<Heart className="h-3 w-3" />
+										{p.likes_count || 0}
+									</span>
+									<span className="flex items-center gap-1">
+										<MessageCircle className="h-3 w-3" />
+										{p.comments_count || 0}
+									</span>
+									<span className="flex items-center gap-1">
+										<Eye className="h-3 w-3" />
+										{p.views_count || 0}
+									</span>
+									{soul_name_badge(p.soul_name)}
+								</div>
+							</a>
+						))}
+					</div>
+				</section>
+			) : null}
+
+			{/* 二级广场入口 */}
+				<div id="squares" className="grid grid-cols-2 gap-3 sm:grid-cols-5 scroll-mt-4">
+					{([
+						{ slug: 'notes', name: '夜笺', desc: '枕边的字，写给不想睡的人', icon: Moon, color: 'from-violet-600/30 to-indigo-600/20', iconColor: 'text-violet-300' },
+						{ slug: 'treehole', name: '私语', desc: '说给不会说出去的人', icon: Lock, color: 'from-slate-700/40 to-violet-900/20', iconColor: 'text-slate-300' },
+						{ slug: 'gaze', name: '晚妆', desc: '妆化好了，差一个人', icon: Eye, color: 'from-amber-600/20 to-rose-600/20', iconColor: 'text-amber-300' },
+						{ slug: 'soul', name: '心相', desc: '灵魂的另一面，等认得的人', icon: Sparkles, color: 'from-fuchsia-600/20 to-violet-600/20', iconColor: 'text-fuchsia-300' },
+						{ slug: 'salon', name: '夜会', desc: '留个暗号，等一个人对上', icon: Flame, color: 'from-rose-700/30 to-fuchsia-700/20', iconColor: 'text-rose-300' },
+					]).map(({ slug, name, desc, icon: Icon, color, iconColor }) => (
+						<a
+							key={slug}
+							href={`/square/${slug}.html`}
+							className={`group relative overflow-hidden rounded-lg border border-violet-900/30 bg-gradient-to-br ${color} p-4 backdrop-blur transition hover:border-violet-400/60 hover:shadow-lg hover:shadow-violet-900/20`}
+						>
+							<div className="pointer-events-none absolute -top-6 -right-6 h-20 w-20 rounded-full bg-white/5 blur-2xl opacity-0 transition group-hover:opacity-100" />
+							<Icon className={`h-5 w-5 ${iconColor} mb-2`} />
+							<div className="font-serif text-base text-violet-50">{name}</div>
+							<div className="mt-0.5 text-[11px] leading-tight text-violet-200/60">{desc}</div>
+						</a>
+					))}
+				</div>
+
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<div>
-							<h1 className="text-2xl font-semibold tracking-tight">CForum</h1>
-						<p className="text-sm text-muted-foreground">由 Cloudflare Workers、Pages、D1、R2 提供服务。</p>
+							<h1 className="text-2xl font-semibold tracking-tight">未眠</h1>
+						<p className="text-sm text-muted-foreground">深夜的树洞，另一个你的栖息地。</p>
 					</div>
 					<div className="flex items-center gap-2">
 						<label className="text-sm text-muted-foreground" htmlFor="category-filter">
@@ -607,19 +890,19 @@ export function IndexPage() {
 				</div>
 
 				{user ? (
-					<Card>
-						<CardHeader>
-							<CardTitle className="flex items-center justify-between gap-2">
-								<span>发布新帖</span>
-								<Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen((v) => !v)}>
-									{createOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-									<span className="sr-only">{createOpen ? '收起' : '展开'}</span>
-								</Button>
-							</CardTitle>
-						</CardHeader>
+				<Card className="border-violet-900/30 bg-gradient-to-br from-[#0B0F1E]/95 via-[#13102B]/95 to-[#1A0B2E]/95 text-violet-50 backdrop-blur">
+					<CardHeader>
+						<CardTitle className="flex items-center justify-between gap-2 font-serif text-violet-100">
+							<span>写下今夜</span>
+							<Button type="button" variant="outline" size="sm" onClick={() => setCreateOpen((v) => !v)} className="border-violet-500/30 bg-white/5 text-violet-100 hover:bg-violet-500/10">
+								{createOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+								<span className="sr-only">{createOpen ? '收起' : '展开'}</span>
+							</Button>
+						</CardTitle>
+					</CardHeader>
 						<CardContent>
 							{!createOpen ? (
-								<div className="text-sm text-muted-foreground">点击右侧按钮展开编辑器。</div>
+								<div className="text-sm text-violet-200/60">夜深了，把另一个自己写出来。</div>
 							) : (
 								<form className="space-y-4" onSubmit={createPost}>
 								{createError ? <div className="rounded-md border border-destructive/50 bg-destructive/5 p-3 text-sm text-destructive">{createError}</div> : null}
@@ -752,42 +1035,43 @@ export function IndexPage() {
 				<div className="space-y-4">
 					<div ref={listTopRef} />
 					{loading ? (
-						<Card>
-							<CardContent className="py-6 text-sm text-muted-foreground">加载中...</CardContent>
+						<Card className="border-violet-900/30 bg-gradient-to-br from-[#0B0F1E]/95 via-[#13102B]/95 to-[#1A0B2E]/95 text-violet-50 backdrop-blur">
+							<CardContent className="py-6 text-sm text-violet-200/60">未眠者正在醒来...</CardContent>
 						</Card>
 					) : posts.length === 0 ? (
-						<Card>
-							<CardContent className="py-6 text-sm text-muted-foreground">暂无帖子</CardContent>
-						</Card>
-					) : (
-						posts.map((p) => {
-							const coverUrl = getCoverImageUrl(p.content || '');
-							const isAdmin = user?.role === 'admin';
-							const menuOpen = adminMenuPostId === p.id;
-							const actionLoading = adminActionPostId === p.id;
-							return (
-								<Card key={p.id}>
-									<CardContent className="py-5">
+						<Card className="border-violet-900/30 bg-gradient-to-br from-[#0B0F1E]/95 via-[#13102B]/95 to-[#1A0B2E]/95 text-violet-50 backdrop-blur">
+						<CardContent className="py-8 text-center text-sm text-violet-200/60 font-serif">夜还没有故事</CardContent>
+					</Card>
+				) : (
+					posts.map((p) => {
+						const coverUrl = getCoverImageUrl(p.content || '');
+						const isAdmin = user?.role === 'admin';
+						const menuOpen = adminMenuPostId === p.id;
+						const actionLoading = adminActionPostId === p.id;
+						return (
+							<Card key={p.id} className="group relative overflow-hidden border-violet-900/30 bg-gradient-to-br from-[#0B0F1E]/95 via-[#13102B]/95 to-[#1A0B2E]/95 text-violet-50 backdrop-blur transition hover:border-violet-500/50 hover:shadow-lg hover:shadow-violet-900/20">
+								<div className="pointer-events-none absolute -top-8 -right-8 h-32 w-32 rounded-full bg-violet-600/10 blur-2xl opacity-0 transition group-hover:opacity-100" />
+								<CardContent className="relative py-5">
 										<div className="flex gap-4">
 											{coverUrl ? (
 												<img
 													src={coverUrl}
 													alt=""
-													className="h-20 w-28 shrink-0 rounded-md object-cover"
+													className="h-20 w-28 shrink-0 rounded-md object-cover ring-1 ring-violet-500/20"
 													loading="lazy"
 													referrerPolicy="no-referrer"
 												/>
 											) : null}
-											<div className="min-w-0 flex-1 space-y-1">
+											<div className="min-w-0 flex-1 space-y-1.5">
 												<div className="flex items-start justify-between gap-2">
 													<div className="flex min-w-0 items-center gap-2">
 														{p.is_pinned ? (
-															<span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+															<span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-300">
 																<Pin className="h-3.5 w-3.5" />
 																置顶
 															</span>
 														) : null}
-														<a className="truncate text-lg font-semibold hover:underline" href={`/posts/${p.id}`}>
+														<a className="truncate font-serif text-lg text-violet-50 transition hover:text-fuchsia-200 hover:underline" href={`/posts/${p.id}`}>
 															{p.title}
 														</a>
 													</div>
@@ -862,24 +1146,24 @@ export function IndexPage() {
 														</div>
 													) : null}
 												</div>
-												<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+												<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-violet-200/60">
 													<span className="inline-flex items-center gap-2">
 														{p.author_avatar ? (
 															<img
 																src={p.author_avatar}
 																alt=""
-																className="h-6 w-6 rounded-full object-cover"
+																className="h-6 w-6 rounded-full object-cover ring-1 ring-violet-500/20"
 																loading="lazy"
 																referrerPolicy="no-referrer"
 															/>
 														) : (
-															<span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-[10px] text-muted-foreground">
+															<span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-violet-900/40 text-[10px] text-violet-200">
 																<User className="h-4 w-4" />
 															</span>
 														)}
-														<span className="truncate text-foreground">{p.author_name}</span>
+														<span className="truncate text-violet-100">{p.author_name}</span>
 														{p.author_role === 'admin' ? (
-															<span className="inline-flex items-center gap-1 rounded border border-indigo-500/30 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-medium text-indigo-700 dark:text-indigo-300">
+															<span className="inline-flex items-center gap-1 rounded border border-fuchsia-500/30 bg-fuchsia-500/10 px-1.5 py-0.5 text-[10px] font-medium text-fuchsia-300">
 																<Shield className="h-3 w-3" />
 																<span className="sr-only">管理员</span>
 															</span>
@@ -894,18 +1178,18 @@ export function IndexPage() {
 													<span>·</span>
 													<span className="whitespace-nowrap">{formatDate(p.created_at)}</span>
 												</div>
-												<div className="flex items-center gap-4 text-xs text-muted-foreground">
-													<span className="inline-flex items-center gap-1">
-														<Heart className="h-4 w-4 text-rose-600" />
-														{p.like_count || 0}
+												<div className="flex items-center gap-4 text-xs text-violet-300/70">
+													<span className="inline-flex items-center gap-1" title="心动">
+														<Heart className="h-3.5 w-3.5 text-rose-400" />
+														<span className="text-violet-200/80">{p.like_count || 0}</span>
 													</span>
-													<span className="inline-flex items-center gap-1">
-														<MessageCircle className="h-4 w-4 text-sky-600" />
-														{p.comment_count || 0}
+													<span className="inline-flex items-center gap-1" title="回响">
+														<MessageCircle className="h-3.5 w-3.5 text-sky-400" />
+														<span className="text-violet-200/80">{p.comment_count || 0}</span>
 													</span>
-													<span className="inline-flex items-center gap-1">
-														<Eye className="h-4 w-4 text-emerald-600" />
-														{p.view_count || 0}
+													<span className="inline-flex items-center gap-1" title="凝视">
+														<Eye className="h-3.5 w-3.5 text-amber-300" />
+														<span className="text-violet-200/80">{p.view_count || 0}</span>
 													</span>
 												</div>
 											</div>
@@ -984,6 +1268,23 @@ export function IndexPage() {
 					</form>
 				</div>
 			</div>
+
+			{/* 品牌 Footer */}
+			<footer className="mt-10 border-t border-violet-900/20 pt-6 pb-4 text-center space-y-2">
+				<div className="font-serif text-sm text-violet-200/60">
+					夜深了，另一个你醒着。
+				</div>
+				<div className="text-[11px] text-violet-300/40">
+					未眠 · Sleepless — 一个写给夜晚的、装着反差灵魂的角落
+				</div>
+				<div className="flex items-center justify-center gap-4 pt-2 text-[11px] text-violet-300/40">
+					<a href="/soul.html" className="hover:text-violet-200 transition">灵魂测定</a>
+					<span className="text-violet-500/30">·</span>
+					<a href="/register.html" className="hover:text-violet-200 transition">成为未眠者</a>
+					<span className="text-violet-500/30">·</span>
+					<a href="/login.html" className="hover:text-violet-200 transition">登入</a>
+				</div>
+			</footer>
 		</PageShell>
 	);
 }

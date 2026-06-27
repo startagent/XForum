@@ -10,6 +10,9 @@ export type ForumConfig = {
 export type Category = {
 	id: number;
 	name: string;
+	slug?: string;
+	description?: string;
+	icon?: string;
 	created_at: string;
 };
 

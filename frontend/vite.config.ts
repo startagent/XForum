@@ -26,7 +26,14 @@ export default defineConfig({
 				reset: path.resolve(__dirname, 'pages', 'reset.html'),
 				post: path.resolve(__dirname, 'pages', 'post.html'),
 				settings: path.resolve(__dirname, 'pages', 'settings.html'),
-				admin: path.resolve(__dirname, 'pages', 'admin.html')
+				admin: path.resolve(__dirname, 'pages', 'admin.html'),
+				soul: path.resolve(__dirname, 'pages', 'soul.html'),
+				enneagram: path.resolve(__dirname, 'pages', 'enneagram.html'),
+				'square-notes': path.resolve(__dirname, 'pages', 'square', 'notes.html'),
+				'square-treehole': path.resolve(__dirname, 'pages', 'square', 'treehole.html'),
+				'square-gaze': path.resolve(__dirname, 'pages', 'square', 'gaze.html'),
+				'square-soul': path.resolve(__dirname, 'pages', 'square', 'soul.html'),
+				'square-salon': path.resolve(__dirname, 'pages', 'square', 'salon.html')
 			}
 		}
 	},

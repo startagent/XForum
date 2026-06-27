@@ -19,6 +19,7 @@ export function SettingsPage() {
 
 	const [username, setUsername] = React.useState(user?.username || '');
 	const [avatarUrl, setAvatarUrl] = React.useState(user?.avatar_url || '');
+	const [gender, setGender] = React.useState<string>(user?.gender || '');
 	const [emailNotifications, setEmailNotifications] = React.useState<boolean>(user?.email_notifications !== false);
 
 	const [emailNew, setEmailNew] = React.useState('');
@@ -49,18 +50,33 @@ export function SettingsPage() {
 		const err = username ? validateText(username, '用户名') : null;
 		if (err) return setError(err);
 		if (username.length > 20) return setError('用户名过长 (最多 20 字符)');
-		if (avatarUrl && avatarUrl.length > 500) return setError('头像 URL 过长 (最多 500 字符)');
+
+		// Only send/validate avatar_url when user actually changed it,
+		// otherwise the existing identicon SVG data URL (which is >500 chars)
+		// would incorrectly trigger the length check.
+		const originalAvatar = user.avatar_url || '';
+		const avatarChanged = avatarUrl !== originalAvatar;
+		if (avatarChanged && avatarUrl && avatarUrl.length > 500) {
+			return setError('头像 URL 过长 (最多 500 字符)');
+		}
 
 		setLoading(true);
 		try {
+			const payload: Record<string, unknown> = {
+				username,
+				email_notifications: emailNotifications
+			};
+			if (avatarChanged) {
+				payload.avatar_url = avatarUrl;
+			}
+			if (gender !== (user.gender || '')) {
+				payload.gender = gender || null;
+			}
+
 			const data = await apiFetch<{ user: User }>('/user/profile', {
 				method: 'POST',
 				headers: getSecurityHeaders('POST'),
-				body: JSON.stringify({
-					username,
-					avatar_url: avatarUrl,
-					email_notifications: emailNotifications
-				})
+				body: JSON.stringify(payload)
 			});
 			setUser(data.user);
 			setUserState(data.user);
@@ -217,6 +233,35 @@ export function SettingsPage() {
 							<div className="space-y-2">
 								<Label htmlFor="profile-avatar">头像 URL</Label>
 								<Input id="profile-avatar" value={avatarUrl || ''} onChange={(e) => setAvatarUrl(e.target.value)} />
+							</div>
+						</div>
+
+						<div className="space-y-2">
+							<Label>身份 <span className="text-xs text-muted-foreground">（她的 / 他的，决定「晚妆」落字权）</span></Label>
+							<div className="grid grid-cols-2 gap-2">
+								<button
+									type="button"
+									onClick={() => setGender('female')}
+									className={`rounded-md border px-3 py-2 text-sm transition ${gender === 'female' ? 'border-fuchsia-500 bg-fuchsia-500/10 text-fuchsia-200' : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted/60'}`}
+								>
+									她的
+								</button>
+								<button
+									type="button"
+									onClick={() => setGender('male')}
+									className={`rounded-md border px-3 py-2 text-sm transition ${gender === 'male' ? 'border-sky-500 bg-sky-500/10 text-sky-200' : 'border-border bg-muted/30 text-muted-foreground hover:bg-muted/60'}`}
+								>
+									他的
+								</button>
+								{gender ? (
+									<button
+										type="button"
+										onClick={() => setGender('')}
+										className="col-span-2 mt-1 text-xs text-muted-foreground hover:underline"
+									>
+										清除身份
+									</button>
+								) : null}
 							</div>
 						</div>
 

@@ -43,7 +43,7 @@ export async function uploadImage(env: S3Env, file: File, userId: string | numbe
     }
 
     if (!env.AWS_ENDPOINT || !env.AWS_BUCKET) {
-        throw new Error('S3/R2 not configured: Either bind an R2 bucket (BUCKET) or set AWS_ENDPOINT and AWS_BUCKET environment variables');
+        throw new Error('Image upload is not configured. Please enable R2 Object Storage in Cloudflare Dashboard.');
     }
     try {
         new URL(env.AWS_ENDPOINT);
@@ -207,6 +207,12 @@ export async function listAllKeys(env: S3Env): Promise<string[]> {
 export function getPublicUrl(env: S3Env, key: string, baseUrl?: string): string {
     if (env.BUCKET) {
         const base = (baseUrl || env.R2_PUBLIC_BASE_URL || '/r2').replace(/\/+$/, '');
+        return `${base}/${key}`;
+    }
+    // For S3-compatible storage (B2 Private bucket), route through Worker /r2/ proxy
+    // so the Worker can sign the request and stream the object back.
+    if (env.AWS_ENDPOINT && env.AWS_BUCKET) {
+        const base = (baseUrl || '/r2').replace(/\/+$/, '');
         return `${base}/${key}`;
     }
     return `${env.AWS_ENDPOINT}/${env.AWS_BUCKET}/${key}`;

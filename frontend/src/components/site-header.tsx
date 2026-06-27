@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { getUser, logout, type User } from '@/lib/auth';
 import { getTheme, toggleTheme, type Theme } from '@/lib/theme';
-import { Home, LogIn, LogOut, Moon, Settings, Shield, Sun, User as UserIcon, UserPlus } from 'lucide-react';
+import { Home, LogIn, LogOut, Moon, Settings, Shield, Sparkles, Sun, User as UserIcon, UserPlus } from 'lucide-react';
 
 export function SiteHeader({
 	currentUser,
@@ -34,6 +34,21 @@ export function SiteHeader({
 				>
 					<Home className="h-5 w-5" />
 					<span className="sr-only">主页</span>
+				</a>
+				<a
+					href="/soul.html"
+					title="灵魂测定"
+					className="inline-flex items-center justify-center rounded-md border border-transparent p-2 text-violet-600 hover:bg-violet-500/10 dark:text-violet-300"
+				>
+					<Sparkles className="h-5 w-5" />
+					<span className="sr-only">灵魂测定</span>
+				</a>
+				<a
+					href="/#squares"
+					title="广场"
+					className="hidden sm:inline-flex items-center justify-center rounded-md border border-transparent p-2 text-foreground hover:bg-muted/40"
+				>
+					<span className="text-sm">广场</span>
 				</a>
 				<div className="flex items-center gap-2">
 					<Button type="button" variant="ghost" size="sm" onClick={toggleTheme}>

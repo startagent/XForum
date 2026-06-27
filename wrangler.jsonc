@@ -17,7 +17,7 @@
 		{
 			"binding": "cforum_db",
 			"database_name": "cforum-db",
-			"database_id": "851270eb-80b8-4e31-825e-645d444898d6",
+			"database_id": "74957297-e752-4142-9148-12a653da272c",
 			"remote": true,
 			"migrations_dir": "migrations"
 		}
@@ -25,13 +25,18 @@
 	/**
 	 * R2 Object Storage (for image uploads)
 	 * https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
+	 * 
+	 * Note: R2 is currently disabled. To enable image uploads:
+	 * 1. Enable R2 in Cloudflare Dashboard (requires payment method for verification)
+	 * 2. Create bucket named "cforum-images"
+	 * 3. Uncomment the r2_buckets section below
 	 */
-	"r2_buckets": [
-		{
-			"binding": "BUCKET",
-			"bucket_name": "cforum-images"
-		}
-	],
+	// "r2_buckets": [
+	// 	{
+	// 		"binding": "BUCKET",
+	// 		"bucket_name": "cforum-images"
+	// 	}
+	// ],
 	/**
 	 * Enable default *.workers.dev domain
 	 */
@@ -76,7 +81,6 @@
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#service-bindings
 	 */
 	// "services": [  {   "binding": "MY_SERVICE",   "service": "my-service"  } ]
-	
 	/**
 	 * Cloudflare Pages + Worker 混合配置
 	 * D1 数据库和 R2 存储已配置，Pages Functions 作为 API 网关
