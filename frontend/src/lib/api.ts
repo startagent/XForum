@@ -61,7 +61,13 @@ export function getSecurityHeaders(method: string, contentType: string | null = 
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-	const res = await fetch(`${API_BASE}${path}`, init);
+	// 自动注入 Authorization 头，防止调用方遗漏导致 401 误触发 logout
+	const token = getToken();
+	const headers = new Headers(init?.headers);
+	if (token && !headers.has('Authorization')) {
+		headers.set('Authorization', `Bearer ${token}`);
+	}
+	const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
 	if (res.status === 401) {
 		logout();
 		throw new Error('登录已过期，请重新登录');
