@@ -453,10 +453,15 @@ export default {
 				`ALTER TABLE soul_deep_results ADD COLUMN relation_mode TEXT;`,
 				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES
 ('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150dc3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`,
+				// 幂等恢复 admin 账户的 admin role（防止被 redeem 误改）
+				`UPDATE users SET role = 'admin' WHERE email = 'admin@adysec.com';`,
 				// 预置 3 个默认夜作者邀请码（admin 创建，无过期）
 				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('NITE7248', 1, 'preset-initial', NULL);`,
 				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('MOON7248', 1, 'preset-initial', NULL);`,
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`
+				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`,
+				// 补充 2 个邀请码（替代已被测试消耗的 NITE7248 / MOON7248）
+				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('STAR7248', 1, 'preset-initial', NULL);`,
+				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('DARK7248', 1, 'preset-initial', NULL);`
 			];
 			for (const stmt of stmts) {
 				try {
