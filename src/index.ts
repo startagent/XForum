@@ -115,14 +115,294 @@ async function verifyTurnstile(token: string, ip: string, secretKey: string): Pr
 	return outcome.success;
 }
 
+let schemaInitialized = false;
+
+const SCHEMA_STMTS = [
+	`CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  username TEXT NOT NULL,
+  password TEXT NOT NULL,
+  role TEXT DEFAULT 'user',
+  verified INTEGER DEFAULT 0,
+  verification_token TEXT,
+  totp_secret TEXT,
+  totp_enabled INTEGER DEFAULT 0,
+  reset_token TEXT,
+  reset_token_expires INTEGER,
+  pending_email TEXT,
+  email_change_token TEXT,
+  avatar_url TEXT,
+  nickname TEXT,
+  email_notifications INTEGER DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`,
+	`CREATE TABLE IF NOT EXISTS creator_invitations (
+  code TEXT PRIMARY KEY,
+  created_by INTEGER NOT NULL,
+  used_by INTEGER,
+  note TEXT,
+  expires_at INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id),
+  FOREIGN KEY (used_by) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS bdsm_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS categories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  slug TEXT,
+  description TEXT,
+  icon TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`,
+	`CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  category_id INTEGER,
+  is_pinned INTEGER DEFAULT 0,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  deleted_at INTEGER,
+  FOREIGN KEY (author_id) REFERENCES users(id),
+  FOREIGN KEY (category_id) REFERENCES categories(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  parent_id INTEGER,
+  author_id INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (post_id) REFERENCES posts(id),
+  FOREIGN KEY (parent_id) REFERENCES comments(id),
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS likes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id, user_id),
+  FOREIGN KEY (post_id) REFERENCES posts(id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);`,
+	`CREATE TABLE IF NOT EXISTS nonces (
+  nonce TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);`,
+	`CREATE TABLE IF NOT EXISTS sessions (
+  jti TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS audit_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  action TEXT NOT NULL,
+  resource_type TEXT,
+  resource_id TEXT,
+  details TEXT,
+  ip_address TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);`,
+	`CREATE TABLE IF NOT EXISTS soul_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  tone TEXT,
+  contrast_level INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS enneagram_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  type_code INTEGER NOT NULL,
+  type_name TEXT NOT NULL,
+  wing_code INTEGER,
+  wing_name TEXT,
+  scores TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS soul_deep_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  planet_code TEXT NOT NULL,
+  planet_name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  relation_mode TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  summary TEXT,
+  cover_emoji TEXT DEFAULT '🌙',
+  content_level TEXT DEFAULT '微光',
+  tags TEXT,
+  recommended_planets TEXT,
+  open_hour_start INTEGER,
+  open_hour_end INTEGER,
+  variables TEXT,
+  status TEXT DEFAULT 'draft',
+  play_count INTEGER DEFAULT 0,
+  ending_count INTEGER DEFAULT 0,
+  is_pinned INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS scenario_characters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  emoji TEXT,
+  description TEXT,
+  initial_state TEXT,
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE
+);`,
+	`CREATE TABLE IF NOT EXISTS scenario_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER NOT NULL,
+  parent_id INTEGER,
+  node_key TEXT NOT NULL,
+  title TEXT,
+  body TEXT NOT NULL,
+  mood TEXT,
+  is_ending INTEGER DEFAULT 0,
+  ending_type TEXT,
+  ending_title TEXT,
+  state_effects TEXT,
+  letter TEXT,
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES scenario_nodes(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS scenario_choices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  target_node_id INTEGER,
+  required_state TEXT,
+  sort_order INTEGER DEFAULT 0,
+  FOREIGN KEY (node_id) REFERENCES scenario_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_node_id) REFERENCES scenario_nodes(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS scenario_plays (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  scenario_id INTEGER NOT NULL,
+  current_node_id INTEGER,
+  state_snapshot TEXT,
+  reached_endings TEXT,
+  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
+);`,
+	`CREATE TABLE IF NOT EXISTS scenario_ending_badges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  scenario_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  ending_type TEXT,
+  ending_title TEXT,
+  achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, scenario_id, node_id),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
+);`,
+	`CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_posts_category_id ON posts(category_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at);`,
+	`CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_likes_post_id ON likes(post_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_likes_user_id ON likes(user_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);`,
+	`CREATE INDEX IF NOT EXISTS idx_soul_results_user_id ON soul_results(user_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_soul_deep_results_user_id ON soul_deep_results(user_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_scenario_nodes_scenario_id ON scenario_nodes(scenario_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_scenario_choices_node_id ON scenario_choices(node_id);`,
+	`CREATE INDEX IF NOT EXISTS idx_scenario_plays_user_id_scenario_id ON scenario_plays(user_id, scenario_id);`,
+];
+
+const DATA_STMTS = [
+	`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
+	`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜笺', 'notes', '枕边的字，写给自己，也写给不想睡的人', 'moon');`,
+	`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('私语', 'treehole', '说给不会说出去的人听，他若听见，便算你赢', 'lock');`,
+	`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('晚妆', 'gaze', '妆化好了，灯也调低了，只差一个不在场的人', 'eye');`,
+	`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('心相', 'soul', '灵魂的另一面，留在这里，等一个认得的人', 'sparkles');`,
+	`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜会', 'salon', '留个暗号，等一个人对上来', 'flame');`,
+	`UPDATE categories SET name='夜笺', description='枕边的字，写给自己，也写给不想睡的人', icon='moon' WHERE slug='notes';`,
+	`UPDATE categories SET name='私语', description='说给不会说出去的人听，他若听见，便算你赢', icon='lock' WHERE slug='treehole';`,
+	`UPDATE categories SET name='晚妆', description='妆化好了，灯也调低了，只差一个不在场的人', icon='eye' WHERE slug='gaze';`,
+	`UPDATE categories SET name='心相', description='灵魂的另一面，留在这里，等一个认得的人', icon='sparkles' WHERE slug='soul';`,
+	`UPDATE categories SET name='夜会', description='留个暗号，等一个人对上来', icon='flame' WHERE slug='salon';`,
+	`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES
+('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150dc3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`,
+	`UPDATE users SET role = 'admin' WHERE email = 'admin@adysec.com';`,
+	`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('NITE7248', 1, 'preset-initial', NULL);`,
+	`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('MOON7248', 1, 'preset-initial', NULL);`,
+	`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`,
+	`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('STAR7248', 1, 'preset-initial', NULL);`,
+	`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('DARK7248', 1, 'preset-initial', NULL);`,
+];
+
+async function ensureSchema(db: D1Database): Promise<void> {
+	if (schemaInitialized) return;
+	
+	try {
+		await db.prepare('SELECT 1 FROM posts LIMIT 1').first();
+		schemaInitialized = true;
+		return;
+	} catch {
+	}
+
+	const schemaPromises = SCHEMA_STMTS.map(stmt => 
+		db.prepare(stmt).run().catch(() => {})
+	);
+	await Promise.all(schemaPromises);
+
+	const dataPromises = DATA_STMTS.map(stmt =>
+		db.prepare(stmt).run().catch(() => {})
+	);
+	await Promise.all(dataPromises);
+
+	schemaInitialized = true;
+	console.log('✅ Schema initialization completed');
+}
+
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const method = request.method;
 
-		// Helper function to get base URL
 		const getBaseUrl = () => {
-			// Priority: 1. Env var 2. X-Original-URL header (from Pages Functions) 3. Request origin
 			if (env.BASE_URL) {
 				console.log(`✅ Using BASE_URL from env: ${env.BASE_URL}`);
 				return env.BASE_URL;
@@ -138,21 +418,18 @@ export default {
 			return url.origin;
 		};
 
-		// CORS headers helper
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS, DELETE, PUT',
 			'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Timestamp, X-Nonce',
 		};
 
-		// Handle OPTIONS (CORS preflight)
 		if (method === 'OPTIONS') {
 			return new Response(null, {
 				headers: corsHeaders,
 			});
 		}
 
-		// Helper to return JSON response with CORS
 		const jsonResponse = (data: any, status = 200) => {
 			return Response.json(data, {
 				status,
@@ -160,12 +437,10 @@ export default {
 			});
 		};
 
-		// Serve R2/B2 objects through Worker (R2 binding or S3-compatible fallback)
 		if (url.pathname.startsWith('/r2/') && (method === 'GET' || method === 'HEAD')) {
 			const key = decodeURIComponent(url.pathname.slice('/r2/'.length));
 			if (!key) return new Response('Not Found', { status: 404 });
 
-			// 1. Try R2 binding first
 			const bucket = (env as any).BUCKET as R2Bucket | undefined;
 			if (bucket) {
 				const object = await bucket.get(key);
@@ -177,7 +452,6 @@ export default {
 				return new Response(method === 'HEAD' ? null : object.body, { headers });
 			}
 
-			// 2. Fall back to S3-compatible storage (e.g. B2 Private bucket)
 			const s3Env = env as any;
 			if (s3Env.AWS_ENDPOINT && s3Env.AWS_BUCKET && s3Env.AWS_ACCESS_KEY_ID && s3Env.AWS_SECRET_ACCESS_KEY) {
 				const { AwsClient } = await import('aws4fetch');
@@ -205,281 +479,7 @@ export default {
 			return new Response('Storage not configured', { status: 404 });
 		}
 
-		// Ensure the database schema exists before anything else.
-		const ensureSchema = async () => {
-			// 所有语句都是幂等的（CREATE TABLE IF NOT EXISTS / ALTER ADD COLUMN 重复执行被 catch / INSERT OR IGNORE / UPDATE）
-			// 每次请求都执行，确保 schema 始终最新。性能影响可接受（D1 本地缓存）。
-
-			// using prepare().run() instead of exec ensures each statement is committed
-			const stmts = [
-				`CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  email TEXT NOT NULL UNIQUE,
-  username TEXT NOT NULL,
-  password TEXT NOT NULL,
-  role TEXT DEFAULT 'user',
-  verified INTEGER DEFAULT 0,
-  verification_token TEXT,
-  totp_secret TEXT,
-  totp_enabled INTEGER DEFAULT 0,
-  reset_token TEXT,
-  reset_token_expires INTEGER,
-  pending_email TEXT,
-  email_change_token TEXT,
-  avatar_url TEXT,
-  nickname TEXT,
-  email_notifications INTEGER DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);`,
-				`CREATE TABLE IF NOT EXISTS creator_invitations (
-  code TEXT PRIMARY KEY,
-  created_by INTEGER NOT NULL,
-  used_by INTEGER,
-  note TEXT,
-  expires_at INTEGER,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (created_by) REFERENCES users(id),
-  FOREIGN KEY (used_by) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS bdsm_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  code TEXT NOT NULL,
-  name TEXT NOT NULL,
-  scores TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS categories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL UNIQUE,
-  slug TEXT,
-  description TEXT,
-  icon TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);`,
-				`CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  author_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  category_id INTEGER,
-  is_pinned INTEGER DEFAULT 0,
-  view_count INTEGER NOT NULL DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (author_id) REFERENCES users(id),
-  FOREIGN KEY (category_id) REFERENCES categories(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS comments (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_id INTEGER NOT NULL,
-  parent_id INTEGER,
-  author_id INTEGER NOT NULL,
-  content TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (post_id) REFERENCES posts(id),
-  FOREIGN KEY (parent_id) REFERENCES comments(id),
-  FOREIGN KEY (author_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS likes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  post_id INTEGER NOT NULL,
-  user_id INTEGER NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(post_id, user_id),
-  FOREIGN KEY (post_id) REFERENCES posts(id),
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT
-);`,
-				`CREATE TABLE IF NOT EXISTS nonces (
-  nonce TEXT PRIMARY KEY,
-  expires_at INTEGER NOT NULL
-);`,
-				`CREATE TABLE IF NOT EXISTS sessions (
-  jti TEXT PRIMARY KEY,
-  user_id INTEGER NOT NULL,
-  expires_at INTEGER NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS audit_logs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER,
-  action TEXT NOT NULL,
-  resource_type TEXT,
-  resource_id TEXT,
-  details TEXT,
-  ip_address TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);`,
-				`CREATE TABLE IF NOT EXISTS soul_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  code TEXT NOT NULL,
-  name TEXT NOT NULL,
-  scores TEXT NOT NULL,
-  tone TEXT,
-  contrast_level INTEGER,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS enneagram_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  type_code INTEGER NOT NULL,
-  type_name TEXT NOT NULL,
-  wing_code INTEGER,
-  wing_name TEXT,
-  scores TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS soul_deep_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  planet_code TEXT NOT NULL,
-  planet_name TEXT NOT NULL,
-  scores TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);`,
-				// ===== 夜剧场 · Night Theater =====
-				`CREATE TABLE IF NOT EXISTS scenarios (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  author_id INTEGER NOT NULL,
-  title TEXT NOT NULL,
-  slug TEXT NOT NULL UNIQUE,
-  summary TEXT,
-  cover_emoji TEXT DEFAULT '🌙',
-  content_level TEXT DEFAULT '微光',
-  tags TEXT,
-  recommended_planets TEXT,
-  open_hour_start INTEGER,
-  open_hour_end INTEGER,
-  variables TEXT,
-  status TEXT DEFAULT 'draft',
-  play_count INTEGER DEFAULT 0,
-  ending_count INTEGER DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (author_id) REFERENCES users(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS scenario_characters (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  scenario_id INTEGER NOT NULL,
-  key TEXT NOT NULL,
-  name TEXT NOT NULL,
-  emoji TEXT,
-  description TEXT,
-  initial_state TEXT,
-  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE
-);`,
-				`CREATE TABLE IF NOT EXISTS scenario_nodes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  scenario_id INTEGER NOT NULL,
-  parent_id INTEGER,
-  node_key TEXT NOT NULL,
-  title TEXT,
-  body TEXT NOT NULL,
-  mood TEXT,
-  is_ending INTEGER DEFAULT 0,
-  ending_type TEXT,
-  ending_title TEXT,
-  state_effects TEXT,
-  letter TEXT,
-  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE,
-  FOREIGN KEY (parent_id) REFERENCES scenario_nodes(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS scenario_choices (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  node_id INTEGER NOT NULL,
-  label TEXT NOT NULL,
-  target_node_id INTEGER,
-  required_state TEXT,
-  sort_order INTEGER DEFAULT 0,
-  FOREIGN KEY (node_id) REFERENCES scenario_nodes(id) ON DELETE CASCADE,
-  FOREIGN KEY (target_node_id) REFERENCES scenario_nodes(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS scenario_plays (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  scenario_id INTEGER NOT NULL,
-  current_node_id INTEGER,
-  state_snapshot TEXT,
-  reached_endings TEXT,
-  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
-);`,
-				`CREATE TABLE IF NOT EXISTS scenario_ending_badges (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  scenario_id INTEGER NOT NULL,
-  node_id INTEGER NOT NULL,
-  ending_type TEXT,
-  ending_title TEXT,
-  achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(user_id, scenario_id, node_id),
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
-);`,
-				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
-				// 雅痞化板块命名 + 描述
-				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜笺', 'notes', '枕边的字，写给自己，也写给不想睡的人', 'moon');`,
-				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('私语', 'treehole', '说给不会说出去的人听，他若听见，便算你赢', 'lock');`,
-				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('晚妆', 'gaze', '妆化好了，灯也调低了，只差一个不在场的人', 'eye');`,
-				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('心相', 'soul', '灵魂的另一面，留在这里，等一个认得的人', 'sparkles');`,
-				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜会', 'salon', '留个暗号，等一个人对上来', 'flame');`,
-				// 已存在的板块做更新（重命名 + 描述升级）
-				`UPDATE categories SET name='夜笺', description='枕边的字，写给自己，也写给不想睡的人', icon='moon' WHERE slug='notes';`,
-				`UPDATE categories SET name='私语', description='说给不会说出去的人听，他若听见，便算你赢', icon='lock' WHERE slug='treehole';`,
-				`UPDATE categories SET name='晚妆', description='妆化好了，灯也调低了，只差一个不在场的人', icon='eye' WHERE slug='gaze';`,
-				`UPDATE categories SET name='心相', description='灵魂的另一面，留在这里，等一个认得的人', icon='sparkles' WHERE slug='soul';`,
-				`UPDATE categories SET name='夜会', description='留个暗号，等一个人对上来', icon='flame' WHERE slug='salon';`,
-				// users 表加 gender 字段（向后兼容）
-				`ALTER TABLE users ADD COLUMN gender TEXT;`,
-				// posts 表加 deleted_at 字段（向后兼容，软删除）
-				`ALTER TABLE posts ADD COLUMN deleted_at INTEGER;`,
-				// soul_results 表加 tone / contrast_level 字段（向后兼容，重复执行会报错但被 catch）
-				`ALTER TABLE soul_results ADD COLUMN tone TEXT;`,
-				`ALTER TABLE soul_results ADD COLUMN contrast_level INTEGER;`,
-				// 夜剧场 scenarios 表加 is_pinned 字段（向后兼容）
-				`ALTER TABLE scenarios ADD COLUMN is_pinned INTEGER DEFAULT 0;`,
-				// 灵魂深度测试 soul_deep_results 表加 relation_mode 字段（向后兼容）
-				`ALTER TABLE soul_deep_results ADD COLUMN relation_mode TEXT;`,
-				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES
-('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150dc3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`,
-				// 幂等恢复 admin 账户的 admin role（防止被 redeem 误改）
-				`UPDATE users SET role = 'admin' WHERE email = 'admin@adysec.com';`,
-				// 预置 3 个默认夜作者邀请码（admin 创建，无过期）
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('NITE7248', 1, 'preset-initial', NULL);`,
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('MOON7248', 1, 'preset-initial', NULL);`,
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`,
-				// 补充 2 个邀请码（替代已被测试消耗的 NITE7248 / MOON7248）
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('STAR7248', 1, 'preset-initial', NULL);`,
-				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('DARK7248', 1, 'preset-initial', NULL);`
-			];
-			for (const stmt of stmts) {
-				try {
-					await env.cforum_db.prepare(stmt).run();
-				} catch (e) {
-					// ALTER ADD COLUMN 重复执行会报错，忽略即可
-				}
-			}
-			// verify posts table exists now
-			try {
-				await env.cforum_db.prepare('SELECT 1 FROM posts LIMIT 1').first();
-			} catch (e) {
-				console.error('Failed to verify posts table after init', e);
-			}
-		};
-
-		// perform initialization before security setup
-		await ensureSchema();
+		await ensureSchema(env.cforum_db);
 
 		let security: Security;
 		try {
@@ -2904,11 +2904,13 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
                         users.avatar_url as author_avatar,
                         users.role as author_role,
                         categories.name as category_name,
-                        (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) as like_count,
-                        (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) as comment_count
+                        COALESCE(lc.like_count, 0) as like_count,
+                        COALESCE(cc.comment_count, 0) as comment_count
                      FROM posts 
                      JOIN users ON posts.author_id = users.id 
-                     LEFT JOIN categories ON posts.category_id = categories.id`;
+                     LEFT JOIN categories ON posts.category_id = categories.id
+                     LEFT JOIN (SELECT post_id, COUNT(*) as like_count FROM likes GROUP BY post_id) lc ON lc.post_id = posts.id
+                     LEFT JOIN (SELECT post_id, COUNT(*) as comment_count FROM comments GROUP BY post_id) cc ON cc.post_id = posts.id`;
                 
                 let countQuery = `SELECT COUNT(*) as total FROM posts`;
 
@@ -2975,13 +2977,15 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
                         users.avatar_url as author_avatar,
                         users.role as author_role,
                         categories.name as category_name,
-                        (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) as like_count,
-                        (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) as comment_count
+                        COALESCE(lc.like_count, 0) as like_count,
+                        COALESCE(cc.comment_count, 0) as comment_count
                      FROM posts 
                      JOIN users ON posts.author_id = users.id 
                      LEFT JOIN categories ON posts.category_id = categories.id
+                     LEFT JOIN (SELECT post_id, COUNT(*) as like_count FROM likes WHERE post_id = ? GROUP BY post_id) lc ON lc.post_id = posts.id
+                     LEFT JOIN (SELECT post_id, COUNT(*) as comment_count FROM comments WHERE post_id = ? GROUP BY post_id) cc ON cc.post_id = posts.id
                      WHERE posts.id = ?`
-				).bind(postId).first();
+				).bind(postId, postId, postId).first();
 				
 				if (!post) return jsonResponse({ error: 'Post not found' }, 404);
 
