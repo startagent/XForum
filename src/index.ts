@@ -207,12 +207,15 @@ export default {
 
 		// Ensure the database schema exists before anything else.
 		const ensureSchema = async () => {
+			// 检查关键新表是否存在；不存在则全量执行幂等迁移
+			let needMigration = true;
 			try {
-				await env.cforum_db.prepare('SELECT 1 FROM posts LIMIT 1').first();
-				return;
+				await env.cforum_db.prepare('SELECT 1 FROM scenarios LIMIT 1').first();
+				needMigration = false;
 			} catch (err: any) {
-				console.warn('Database schema missing, initializing', err);
+				// scenarios 表不存在，需要执行迁移
 			}
+			if (!needMigration) return;
 
 			// using prepare().run() instead of exec ensures each statement is committed
 			const stmts = [
