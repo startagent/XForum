@@ -5,6 +5,16 @@ import { uploadImage, deleteImage, listAllKeys, getPublicUrl, getKeyFromUrl, S3E
 import * as OTPAuth from 'otpauth';
 import { Security, UserPayload } from './security';
 import { BDSM_DISCLAIMER, BDSM_TYPES, BDSM_QUESTIONS } from './bdsm-data';
+import {
+	SOUL_DEEP_DISCLAIMER,
+	SOUL_DEEP_DIMS,
+	SOUL_DEEP_PLANETS,
+	SOUL_DEEP_QUESTIONS,
+	SOUL_DEEP_RELATION_MODES,
+	derivePlanet,
+	deriveRelationMode,
+	calcMatch,
+} from './soul-deep-data';
 
 interface DBUser {
     id: number;
@@ -331,6 +341,96 @@ export default {
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );`,
+				`CREATE TABLE IF NOT EXISTS soul_deep_results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  planet_code TEXT NOT NULL,
+  planet_name TEXT NOT NULL,
+  scores TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);`,
+				// ===== 夜剧场 · Night Theater =====
+				`CREATE TABLE IF NOT EXISTS scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author_id INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  summary TEXT,
+  cover_emoji TEXT DEFAULT '🌙',
+  content_level TEXT DEFAULT '微光',
+  tags TEXT,
+  recommended_planets TEXT,
+  open_hour_start INTEGER,
+  open_hour_end INTEGER,
+  variables TEXT,
+  status TEXT DEFAULT 'draft',
+  play_count INTEGER DEFAULT 0,
+  ending_count INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (author_id) REFERENCES users(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS scenario_characters (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  name TEXT NOT NULL,
+  emoji TEXT,
+  description TEXT,
+  initial_state TEXT,
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE
+);`,
+				`CREATE TABLE IF NOT EXISTS scenario_nodes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER NOT NULL,
+  parent_id INTEGER,
+  node_key TEXT NOT NULL,
+  title TEXT,
+  body TEXT NOT NULL,
+  mood TEXT,
+  is_ending INTEGER DEFAULT 0,
+  ending_type TEXT,
+  ending_title TEXT,
+  state_effects TEXT,
+  letter TEXT,
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES scenario_nodes(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS scenario_choices (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  target_node_id INTEGER,
+  required_state TEXT,
+  sort_order INTEGER DEFAULT 0,
+  FOREIGN KEY (node_id) REFERENCES scenario_nodes(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_node_id) REFERENCES scenario_nodes(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS scenario_plays (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  scenario_id INTEGER NOT NULL,
+  current_node_id INTEGER,
+  state_snapshot TEXT,
+  reached_endings TEXT,
+  started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
+);`,
+				`CREATE TABLE IF NOT EXISTS scenario_ending_badges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  scenario_id INTEGER NOT NULL,
+  node_id INTEGER NOT NULL,
+  ending_type TEXT,
+  ending_title TEXT,
+  achieved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, scenario_id, node_id),
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (scenario_id) REFERENCES scenarios(id)
+);`,
 				`INSERT OR IGNORE INTO settings (key, value) VALUES ('turnstile_enabled', '0');`,
 				// 雅痞化板块命名 + 描述
 				`INSERT OR IGNORE INTO categories (name, slug, description, icon) VALUES ('夜笺', 'notes', '枕边的字，写给自己，也写给不想睡的人', 'moon');`,
@@ -349,7 +449,11 @@ export default {
 				// soul_results 表加 tone / contrast_level 字段（向后兼容，重复执行会报错但被 catch）
 				`ALTER TABLE soul_results ADD COLUMN tone TEXT;`,
 				`ALTER TABLE soul_results ADD COLUMN contrast_level INTEGER;`,
-				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES 
+				// 夜剧场 scenarios 表加 is_pinned 字段（向后兼容）
+				`ALTER TABLE scenarios ADD COLUMN is_pinned INTEGER DEFAULT 0;`,
+				// 灵魂深度测试 soul_deep_results 表加 relation_mode 字段（向后兼容）
+				`ALTER TABLE soul_deep_results ADD COLUMN relation_mode TEXT;`,
+				`INSERT OR IGNORE INTO users (email, username, password, role, verified, nickname) VALUES
 ('admin@adysec.com', 'Admin', 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7', 'admin', 1, 'System Admin');`
 			];
 			for (const stmt of stmts) {
@@ -2002,6 +2106,735 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 					'SELECT id, email, username, created_at FROM users'
 				).all();
 				return jsonResponse(results);
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// ===== 灵魂深度测试 (5 星球 / 8 维度 / 40 题) =====
+
+		// GET /api/soul-deep/types - 公开：返回维度 / 星球 / 题库 / 关系模式
+		if (url.pathname === '/api/soul-deep/types' && method === 'GET') {
+			return jsonResponse({
+				disclaimer: SOUL_DEEP_DISCLAIMER,
+				dims: SOUL_DEEP_DIMS,
+				planets: SOUL_DEEP_PLANETS,
+				relation_modes: SOUL_DEEP_RELATION_MODES,
+				questions: SOUL_DEEP_QUESTIONS,
+			});
+		}
+
+		// POST /api/soul-deep - 保存深度测试结果（同时计算 relation_mode）
+		if (url.pathname === '/api/soul-deep' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const body = await request.json() as any;
+				const { planet_code, planet_name, scores } = body;
+				if (!planet_code || !planet_name || !scores) {
+					return jsonResponse({ error: 'Missing fields' }, 400);
+				}
+				// 推算关系期待
+				const relation_mode = deriveRelationMode(scores);
+				await env.cforum_db.prepare(
+					'DELETE FROM soul_deep_results WHERE user_id = ?'
+				).bind(userPayload.id).run();
+				await env.cforum_db.prepare(
+					'INSERT INTO soul_deep_results (user_id, planet_code, planet_name, scores, relation_mode) VALUES (?, ?, ?, ?, ?)'
+				).bind(
+					userPayload.id,
+					String(planet_code),
+					String(planet_name),
+					JSON.stringify(scores),
+					relation_mode.code
+				).run();
+				return jsonResponse({ success: true, relation_mode });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul-deep - 当前用户深度测试结果
+		if (url.pathname === '/api/soul-deep' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const row = await env.cforum_db.prepare(
+					'SELECT planet_code, planet_name, scores, relation_mode, created_at FROM soul_deep_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id).first<any>();
+				if (!row) return jsonResponse({ result: null });
+				return jsonResponse({
+					result: {
+						planet_code: row.planet_code,
+						planet_name: row.planet_name,
+						scores: JSON.parse(row.scores),
+						relation_mode: row.relation_mode || null,
+						created_at: row.created_at,
+					},
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul-deep/history - 当前用户历史测试记录（轨迹）
+		if (url.pathname === '/api/soul-deep/history' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const { results } = await env.cforum_db.prepare(
+					'SELECT planet_code, planet_name, relation_mode, created_at FROM soul_deep_results WHERE user_id = ? ORDER BY id DESC LIMIT 20'
+				).bind(userPayload.id).all();
+				return jsonResponse({ history: results });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul-deep/profile?user_id=XXX - 公开：用户灵魂档案（隐藏详细分数）
+		if (url.pathname === '/api/soul-deep/profile' && method === 'GET') {
+			try {
+				const userId = parseInt(url.searchParams.get('user_id') || '0');
+				if (!userId) return jsonResponse({ error: 'Missing user_id' }, 400);
+				const row = await env.cforum_db.prepare(
+					`SELECT sdr.planet_code, sdr.planet_name, sdr.relation_mode, sdr.created_at,
+					 u.username, u.avatar_url
+					 FROM soul_deep_results sdr
+					 JOIN users u ON u.id = sdr.user_id
+					 WHERE sdr.user_id = ?
+					 ORDER BY sdr.id DESC LIMIT 1`
+				).bind(userId).first<any>();
+				if (!row) return jsonResponse({ profile: null });
+				const planet = SOUL_DEEP_PLANETS.find((p) => p.code === row.planet_code);
+				// 公开档案只暴露星球 + 关系期待 + 主维度名（不暴露详细分数）
+				return jsonResponse({
+					profile: {
+						user_id: userId,
+						username: row.username,
+						avatar_url: row.avatar_url,
+						planet_code: row.planet_code,
+						planet_name: row.planet_name,
+						planet_emoji: planet?.emoji || '🌙',
+						planet_tagline: planet?.tagline || '',
+						planet_desc: planet?.desc || '',
+						planet_color: planet?.color || '#A78BFA',
+						seeking: planet?.seeking || '',
+						relation_mode: row.relation_mode,
+						complementary_planets: planet?.complementary || [],
+						chemistry_planets: planet?.chemistry || [],
+						friction_planets: planet?.friction || [],
+						created_at: row.created_at,
+					},
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul-deep/match?user_id=XXX - 计算当前用户与目标用户的匹配度
+		if (url.pathname === '/api/soul-deep/match' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const targetUserId = parseInt(url.searchParams.get('user_id') || '0');
+				if (!targetUserId || targetUserId === userPayload.id) {
+					return jsonResponse({ error: 'Invalid user_id' }, 400);
+				}
+				const [myRow, theirRow] = await Promise.all([
+					env.cforum_db.prepare(
+						'SELECT planet_code, scores FROM soul_deep_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+					).bind(userPayload.id).first<any>(),
+					env.cforum_db.prepare(
+						'SELECT planet_code, scores FROM soul_deep_results WHERE user_id = ? ORDER BY id DESC LIMIT 1'
+					).bind(targetUserId).first<any>(),
+				]);
+				if (!myRow || !theirRow) {
+					return jsonResponse({ match: null, error: '需要双方都完成灵魂深度测试' });
+				}
+				const myScores = JSON.parse(myRow.scores);
+				const theirScores = JSON.parse(theirRow.scores);
+				const myPlanet = SOUL_DEEP_PLANETS.find((p) => p.code === myRow.planet_code);
+				const theirPlanet = SOUL_DEEP_PLANETS.find((p) => p.code === theirRow.planet_code);
+				const match = calcMatch(myScores, theirScores, myPlanet, theirPlanet);
+				return jsonResponse({
+					match,
+					my_planet: myPlanet ? { code: myPlanet.code, name: myPlanet.name, emoji: myPlanet.emoji } : null,
+					their_planet: theirPlanet ? { code: theirPlanet.code, name: theirPlanet.name, emoji: theirPlanet.emoji } : null,
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/soul-deep/planet?code=XXX - 公开：根据 BDSM scores 推荐星球
+		if (url.pathname === '/api/soul-deep/planet' && method === 'GET') {
+			return jsonResponse({ planets: SOUL_DEEP_PLANETS, dims: SOUL_DEEP_DIMS, relation_modes: SOUL_DEEP_RELATION_MODES });
+		}
+
+		// ===== 夜剧场 · Night Theater =====
+
+		// GET /api/scenarios - 公开剧本列表
+		if (url.pathname === '/api/scenarios' && method === 'GET') {
+			try {
+				const hour = new Date().getHours();
+				const { results } = await env.cforum_db.prepare(
+					`SELECT s.id, s.title, s.slug, s.summary, s.cover_emoji, s.content_level,
+						s.tags, s.recommended_planets, s.open_hour_start, s.open_hour_end,
+						s.play_count, s.ending_count, s.updated_at,
+						u.username AS author_name, u.avatar_url AS author_avatar, u.role AS author_role
+					 FROM scenarios s
+					 LEFT JOIN users u ON u.id = s.author_id
+					 WHERE s.status = 'published'
+					 ORDER BY s.is_pinned DESC, s.updated_at DESC
+					 LIMIT 50`
+				).all();
+				const list = (results as any[]).map((r) => {
+					let open_now = true;
+					if (r.open_hour_start != null && r.open_hour_end != null) {
+						if (r.open_hour_start <= r.open_hour_end) {
+							open_now = hour >= r.open_hour_start && hour < r.open_hour_end;
+						} else {
+							open_now = hour >= r.open_hour_start || hour < r.open_hour_end;
+						}
+					}
+					return {
+						...r,
+						tags: r.tags ? JSON.parse(r.tags) : [],
+						recommended_planets: r.recommended_planets ? JSON.parse(r.recommended_planets) : [],
+						open_now,
+					};
+				});
+				return jsonResponse({ scenarios: list });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/scenarios/my - 我创作的剧本（creator only）
+		if (url.pathname === '/api/scenarios/my' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				if (userPayload.role !== 'creator' && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '仅创作者可访问' }, 403);
+				}
+				const { results } = await env.cforum_db.prepare(
+					`SELECT id, title, slug, summary, cover_emoji, content_level, tags, status,
+						play_count, ending_count, updated_at, created_at
+					 FROM scenarios WHERE author_id = ? ORDER BY updated_at DESC`
+				).bind(userPayload.id).all();
+				return jsonResponse({ scenarios: results });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios - 创建剧本（creator only）
+		if (url.pathname === '/api/scenarios' && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				if (userPayload.role !== 'creator' && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '仅创作者可发布剧本' }, 403);
+				}
+				const body = await request.json() as any;
+				const title = String(body.title || '').trim();
+				if (!title) return jsonResponse({ error: '标题不能为空' }, 400);
+				const slug = String(body.slug || '').trim() || `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+				const summary = body.summary ? String(body.summary) : null;
+				const cover_emoji = body.cover_emoji ? String(body.cover_emoji) : '🌙';
+				const content_level = body.content_level ? String(body.content_level) : '微光';
+				const tags = body.tags ? JSON.stringify(body.tags) : null;
+				const recommended_planets = body.recommended_planets ? JSON.stringify(body.recommended_planets) : null;
+				const open_hour_start = typeof body.open_hour_start === 'number' ? body.open_hour_start : null;
+				const open_hour_end = typeof body.open_hour_end === 'number' ? body.open_hour_end : null;
+				const variables = body.variables ? JSON.stringify(body.variables) : null;
+				const status = body.status === 'published' ? 'published' : 'draft';
+				const info = await env.cforum_db.prepare(
+					`INSERT INTO scenarios (author_id, title, slug, summary, cover_emoji, content_level, tags, recommended_planets, open_hour_start, open_hour_end, variables, status)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				).bind(userPayload.id, title, slug, summary, cover_emoji, content_level, tags, recommended_planets, open_hour_start, open_hour_end, variables, status).run();
+				return jsonResponse({ id: info.meta.last_row_id, slug });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// PUT /api/scenarios/:id - 更新剧本
+		const scenarioPutMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)$/);
+		if (scenarioPutMatch && method === 'PUT') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(scenarioPutMatch[1]);
+				const row = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!row) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (row.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				const body = await request.json() as any;
+				const fields: string[] = [];
+				const vals: any[] = [];
+				const map: Record<string, string> = {
+					title: 'title',
+					slug: 'slug',
+					summary: 'summary',
+					cover_emoji: 'cover_emoji',
+					content_level: 'content_level',
+					status: 'status',
+				};
+				for (const [k, col] of Object.entries(map)) {
+					if (body[k] !== undefined) {
+						fields.push(`${col} = ?`);
+						vals.push(String(body[k]));
+					}
+				}
+				for (const [k, col] of [['tags', 'tags'], ['recommended_planets', 'recommended_planets'], ['variables', 'variables']] as [string, string][]) {
+					if (body[k] !== undefined) {
+						fields.push(`${col} = ?`);
+						vals.push(body[k] ? JSON.stringify(body[k]) : null);
+					}
+				}
+				if (body.open_hour_start !== undefined) { fields.push('open_hour_start = ?'); vals.push(typeof body.open_hour_start === 'number' ? body.open_hour_start : null); }
+				if (body.open_hour_end !== undefined) { fields.push('open_hour_end = ?'); vals.push(typeof body.open_hour_end === 'number' ? body.open_hour_end : null); }
+				if (fields.length === 0) return jsonResponse({ success: true });
+				fields.push('updated_at = CURRENT_TIMESTAMP');
+				vals.push(sid);
+				await env.cforum_db.prepare(`UPDATE scenarios SET ${fields.join(', ')} WHERE id = ?`).bind(...vals).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/scenarios/:slug - 公开剧本详情（含节点图）
+		const scenarioGetMatch = url.pathname.match(/^\/api\/scenarios\/([^/]+)$/);
+		if (scenarioGetMatch && method === 'GET') {
+			try {
+				const slugOrId = scenarioGetMatch[1];
+				const isId = /^\d+$/.test(slugOrId);
+				const srow = await env.cforum_db.prepare(
+					`SELECT s.*, u.username AS author_name, u.avatar_url AS author_avatar, u.role AS author_role
+					 FROM scenarios s LEFT JOIN users u ON u.id = s.author_id
+					 WHERE ${isId ? 's.id = ?' : 's.slug = ?'}`
+				).bind(isId ? parseInt(slugOrId) : slugOrId).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				const nodes = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_nodes WHERE scenario_id = ? ORDER BY id ASC'
+				).bind(srow.id).all();
+				const choices = await env.cforum_db.prepare(
+					`SELECT c.* FROM scenario_choices c
+					 JOIN scenario_nodes n ON n.id = c.node_id
+					 WHERE n.scenario_id = ? ORDER BY c.sort_order ASC`
+				).bind(srow.id).all();
+				const characters = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_characters WHERE scenario_id = ?'
+				).bind(srow.id).all();
+				return jsonResponse({
+					scenario: {
+						...srow,
+						tags: srow.tags ? JSON.parse(srow.tags) : [],
+						recommended_planets: srow.recommended_planets ? JSON.parse(srow.recommended_planets) : [],
+						variables: srow.variables ? JSON.parse(srow.variables) : null,
+					},
+					nodes: (nodes.results as any[]).map((n) => ({
+						...n,
+						state_effects: n.state_effects ? JSON.parse(n.state_effects) : null,
+					})),
+					choices: (choices.results as any[]).map((c) => ({
+						...c,
+						required_state: c.required_state ? JSON.parse(c.required_state) : null,
+					})),
+					characters: (characters.results as any[]).map((c) => ({
+						...c,
+						initial_state: c.initial_state ? JSON.parse(c.initial_state) : null,
+					})),
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios/:id/nodes - 添加/更新节点
+		const nodePostMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/nodes$/);
+		if (nodePostMatch && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(nodePostMatch[1]);
+				const row = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!row) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (row.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				const body = await request.json() as any;
+				const node_key = String(body.node_key || `n-${Date.now().toString(36)}`);
+				const info = await env.cforum_db.prepare(
+					`INSERT INTO scenario_nodes (scenario_id, parent_id, node_key, title, body, mood, is_ending, ending_type, ending_title, state_effects, letter)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+				).bind(
+					sid,
+					body.parent_id ? parseInt(body.parent_id) : null,
+					node_key,
+					body.title ? String(body.title) : null,
+					String(body.body || ''),
+					body.mood ? String(body.mood) : null,
+					body.is_ending ? 1 : 0,
+					body.ending_type ? String(body.ending_type) : null,
+					body.ending_title ? String(body.ending_title) : null,
+					body.state_effects ? JSON.stringify(body.state_effects) : null,
+					body.letter ? String(body.letter) : null
+				).run();
+				return jsonResponse({ id: info.meta.last_row_id, node_key });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// PUT /api/scenarios/:id/nodes/:nodeId - 更新节点
+		const nodePutMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/nodes\/(\d+)$/);
+		if (nodePutMatch && method === 'PUT') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(nodePutMatch[1]);
+				const nodeId = parseInt(nodePutMatch[2]);
+				const srow = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				const body = await request.json() as any;
+				const fields: string[] = [];
+				const vals: any[] = [];
+				const simple: Record<string, string> = {
+					title: 'title',
+					body: 'body',
+					mood: 'mood',
+					ending_type: 'ending_type',
+					ending_title: 'ending_title',
+					letter: 'letter',
+				};
+				for (const [k, col] of Object.entries(simple)) {
+					if (body[k] !== undefined) { fields.push(`${col} = ?`); vals.push(body[k] ? String(body[k]) : null); }
+				}
+				if (body.parent_id !== undefined) { fields.push('parent_id = ?'); vals.push(body.parent_id ? parseInt(body.parent_id) : null); }
+				if (body.is_ending !== undefined) { fields.push('is_ending = ?'); vals.push(body.is_ending ? 1 : 0); }
+				if (body.state_effects !== undefined) { fields.push('state_effects = ?'); vals.push(body.state_effects ? JSON.stringify(body.state_effects) : null); }
+				if (fields.length === 0) return jsonResponse({ success: true });
+				vals.push(nodeId);
+				await env.cforum_db.prepare(`UPDATE scenario_nodes SET ${fields.join(', ')} WHERE id = ?`).bind(...vals).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// DELETE /api/scenarios/:id/nodes/:nodeId - 删除节点（级联删除子选项）
+		if (nodePutMatch && method === 'DELETE') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(nodePutMatch[1]);
+				const nodeId = parseInt(nodePutMatch[2]);
+				const srow = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				await env.cforum_db.prepare('DELETE FROM scenario_choices WHERE node_id = ? OR target_node_id = ?').bind(nodeId, nodeId).run();
+				await env.cforum_db.prepare('DELETE FROM scenario_nodes WHERE id = ?').bind(nodeId).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios/:id/choices - 添加选项
+		const choicePostMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/choices$/);
+		if (choicePostMatch && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(choicePostMatch[1]);
+				const srow = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				const body = await request.json() as any;
+				const info = await env.cforum_db.prepare(
+					`INSERT INTO scenario_choices (node_id, label, target_node_id, required_state, sort_order)
+					 VALUES (?, ?, ?, ?, ?)`
+				).bind(
+					parseInt(body.node_id),
+					String(body.label || ''),
+					body.target_node_id ? parseInt(body.target_node_id) : null,
+					body.required_state ? JSON.stringify(body.required_state) : null,
+					typeof body.sort_order === 'number' ? body.sort_order : 0
+				).run();
+				return jsonResponse({ id: info.meta.last_row_id });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// PUT /api/scenarios/:id/choices/:choiceId
+		const choicePutMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/choices\/(\d+)$/);
+		if (choicePutMatch && method === 'PUT') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(choicePutMatch[1]);
+				const choiceId = parseInt(choicePutMatch[2]);
+				const srow = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				const body = await request.json() as any;
+				const fields: string[] = [];
+				const vals: any[] = [];
+				if (body.label !== undefined) { fields.push('label = ?'); vals.push(String(body.label)); }
+				if (body.target_node_id !== undefined) { fields.push('target_node_id = ?'); vals.push(body.target_node_id ? parseInt(body.target_node_id) : null); }
+				if (body.required_state !== undefined) { fields.push('required_state = ?'); vals.push(body.required_state ? JSON.stringify(body.required_state) : null); }
+				if (body.sort_order !== undefined) { fields.push('sort_order = ?'); vals.push(typeof body.sort_order === 'number' ? body.sort_order : 0); }
+				if (fields.length === 0) return jsonResponse({ success: true });
+				vals.push(choiceId);
+				await env.cforum_db.prepare(`UPDATE scenario_choices SET ${fields.join(', ')} WHERE id = ?`).bind(...vals).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// DELETE /api/scenarios/:id/choices/:choiceId
+		if (choicePutMatch && method === 'DELETE') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(choicePutMatch[1]);
+				const choiceId = parseInt(choicePutMatch[2]);
+				const srow = await env.cforum_db.prepare('SELECT author_id FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.author_id !== userPayload.id && userPayload.role !== 'admin') {
+					return jsonResponse({ error: '无权修改' }, 403);
+				}
+				await env.cforum_db.prepare('DELETE FROM scenario_choices WHERE id = ?').bind(choiceId).run();
+				return jsonResponse({ success: true });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/scenarios/:id/play - 获取当前用户的游玩进度
+		const playGetMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/play$/);
+		if (playGetMatch && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(playGetMatch[1]);
+				const row = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_plays WHERE user_id = ? AND scenario_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id, sid).first<any>();
+				if (!row) return jsonResponse({ play: null });
+				return jsonResponse({
+					play: {
+						...row,
+						state_snapshot: row.state_snapshot ? JSON.parse(row.state_snapshot) : {},
+						reached_endings: row.reached_endings ? JSON.parse(row.reached_endings) : [],
+					},
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios/:id/play/start - 开始或继续游玩
+		const playStartMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/play\/start$/);
+		if (playStartMatch && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(playStartMatch[1]);
+				const srow = await env.cforum_db.prepare('SELECT * FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				if (srow.status !== 'published') return jsonResponse({ error: '剧本未发布' }, 400);
+				// 检查开放时段
+				const hour = new Date().getHours();
+				if (srow.open_hour_start != null && srow.open_hour_end != null) {
+					let open = false;
+					if (srow.open_hour_start <= srow.open_hour_end) {
+						open = hour >= srow.open_hour_start && hour < srow.open_hour_end;
+					} else {
+						open = hour >= srow.open_hour_start || hour < srow.open_hour_end;
+					}
+					if (!open) return jsonResponse({ error: `剧本仅 ${srow.open_hour_start}:00 - ${srow.open_hour_end}:00 开放` }, 400);
+				}
+				// 已有进度则继续
+				let row = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_plays WHERE user_id = ? AND scenario_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id, sid).first<any>();
+				if (!row) {
+					// 创建新进度，定位到起点节点
+					const startNode = await env.cforum_db.prepare(
+						'SELECT * FROM scenario_nodes WHERE scenario_id = ? AND parent_id IS NULL ORDER BY id ASC LIMIT 1'
+					).bind(sid).first<any>();
+					if (!startNode) return jsonResponse({ error: '剧本没有起点节点' }, 400);
+					const initialState = srow.variables ? JSON.parse(srow.variables) : {};
+					const info = await env.cforum_db.prepare(
+						'INSERT INTO scenario_plays (user_id, scenario_id, current_node_id, state_snapshot, reached_endings) VALUES (?, ?, ?, ?, ?)'
+					).bind(userPayload.id, sid, startNode.id, JSON.stringify(initialState), '[]').run();
+					await env.cforum_db.prepare('UPDATE scenarios SET play_count = play_count + 1 WHERE id = ?').bind(sid).run();
+					row = await env.cforum_db.prepare('SELECT * FROM scenario_plays WHERE id = ?').bind(info.meta.last_row_id).first<any>();
+				}
+				// 加载当前节点
+				const node = await env.cforum_db.prepare('SELECT * FROM scenario_nodes WHERE id = ?').bind(row.current_node_id).first<any>();
+				const choices = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_choices WHERE node_id = ? ORDER BY sort_order ASC'
+				).bind(row.current_node_id).all();
+				return jsonResponse({
+					play: {
+						...row,
+						state_snapshot: row.state_snapshot ? JSON.parse(row.state_snapshot) : {},
+						reached_endings: row.reached_endings ? JSON.parse(row.reached_endings) : [],
+					},
+					node: node ? {
+						...node,
+						state_effects: node.state_effects ? JSON.parse(node.state_effects) : null,
+					} : null,
+					choices: (choices.results as any[]).map((c) => ({
+						...c,
+						required_state: c.required_state ? JSON.parse(c.required_state) : null,
+					})),
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios/:id/play/choose - 选择选项，推进剧情
+		const playChooseMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/play\/choose$/);
+		if (playChooseMatch && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(playChooseMatch[1]);
+				const body = await request.json() as any;
+				const choiceId = parseInt(body.choice_id);
+				const row = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_plays WHERE user_id = ? AND scenario_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id, sid).first<any>();
+				if (!row) return jsonResponse({ error: '尚未开始游玩' }, 400);
+				const choice = await env.cforum_db.prepare(
+					'SELECT c.*, n.scenario_id FROM scenario_choices c JOIN scenario_nodes n ON n.id = c.node_id WHERE c.id = ?'
+				).bind(choiceId).first<any>();
+				if (!choice || choice.scenario_id !== sid || choice.node_id !== row.current_node_id) {
+					return jsonResponse({ error: '选项无效' }, 400);
+				}
+				const state = row.state_snapshot ? JSON.parse(row.state_snapshot) : {};
+				// 应用当前节点的 state_effects（进入节点时本应应用，这里在离开时补一次以确保）
+				// 推进到目标节点
+				if (!choice.target_node_id) {
+					return jsonResponse({ error: '选项没有目标节点' }, 400);
+				}
+				const nextNode = await env.cforum_db.prepare('SELECT * FROM scenario_nodes WHERE id = ?').bind(choice.target_node_id).first<any>();
+				if (!nextNode) return jsonResponse({ error: '目标节点不存在' }, 400);
+				// 应用目标节点的 state_effects
+				if (nextNode.state_effects) {
+					const effects = JSON.parse(nextNode.state_effects);
+					for (const [k, v] of Object.entries(effects)) {
+						state[k] = (state[k] || 0) + (v as number);
+					}
+				}
+				let reached_endings = row.reached_endings ? JSON.parse(row.reached_endings) : [];
+				let badgeAwarded = false;
+				if (nextNode.is_ending) {
+					const endingInfo = {
+						node_id: nextNode.id,
+						ending_type: nextNode.ending_type,
+						ending_title: nextNode.ending_title,
+					};
+					if (!reached_endings.find((e: any) => e.node_id === nextNode.id)) {
+						reached_endings.push(endingInfo);
+					}
+					// 记录徽章
+					try {
+						await env.cforum_db.prepare(
+							'INSERT OR IGNORE INTO scenario_ending_badges (user_id, scenario_id, node_id, ending_type, ending_title) VALUES (?, ?, ?, ?, ?)'
+						).bind(userPayload.id, sid, nextNode.id, nextNode.ending_type || 'normal', nextNode.ending_title || '').run();
+						badgeAwarded = true;
+					} catch (e) { /* ignore */ }
+				}
+				await env.cforum_db.prepare(
+					'UPDATE scenario_plays SET current_node_id = ?, state_snapshot = ?, reached_endings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+				).bind(nextNode.id, JSON.stringify(state), JSON.stringify(reached_endings), row.id).run();
+				// 加载下一节点的选项
+				const nextChoices = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_choices WHERE node_id = ? ORDER BY sort_order ASC'
+				).bind(nextNode.id).all();
+				return jsonResponse({
+					play: {
+						...row,
+						current_node_id: nextNode.id,
+						state_snapshot: state,
+						reached_endings: reached_endings,
+					},
+					node: {
+						...nextNode,
+						state_effects: nextNode.state_effects ? JSON.parse(nextNode.state_effects) : null,
+					},
+					choices: (nextChoices.results as any[]).map((c) => ({
+						...c,
+						required_state: c.required_state ? JSON.parse(c.required_state) : null,
+					})),
+					badge_awarded: badgeAwarded,
+				});
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// POST /api/scenarios/:id/play/reset - 重置游玩（保留结局徽章）
+		const playResetMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/play\/reset$/);
+		if (playResetMatch && method === 'POST') {
+			try {
+				const userPayload = await authenticate(request);
+				const sid = parseInt(playResetMatch[1]);
+				const srow = await env.cforum_db.prepare('SELECT * FROM scenarios WHERE id = ?').bind(sid).first<any>();
+				if (!srow) return jsonResponse({ error: '剧本不存在' }, 404);
+				const startNode = await env.cforum_db.prepare(
+					'SELECT * FROM scenario_nodes WHERE scenario_id = ? AND parent_id IS NULL ORDER BY id ASC LIMIT 1'
+				).bind(sid).first<any>();
+				if (!startNode) return jsonResponse({ error: '剧本没有起点节点' }, 400);
+				const initialState = srow.variables ? JSON.parse(srow.variables) : {};
+				// 保留已达成结局
+				const oldRow = await env.cforum_db.prepare(
+					'SELECT reached_endings FROM scenario_plays WHERE user_id = ? AND scenario_id = ? ORDER BY id DESC LIMIT 1'
+				).bind(userPayload.id, sid).first<any>();
+				const reached = oldRow?.reached_endings ? JSON.parse(oldRow.reached_endings) : [];
+				await env.cforum_db.prepare(
+					'DELETE FROM scenario_plays WHERE user_id = ? AND scenario_id = ?'
+				).bind(userPayload.id, sid).run();
+				await env.cforum_db.prepare(
+					'INSERT INTO scenario_plays (user_id, scenario_id, current_node_id, state_snapshot, reached_endings) VALUES (?, ?, ?, ?, ?)'
+				).bind(userPayload.id, sid, startNode.id, JSON.stringify(initialState), JSON.stringify(reached)).run();
+				return jsonResponse({ success: true, reached_endings: reached });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/user/endings - 我的结局徽章
+		if (url.pathname === '/api/user/endings' && method === 'GET') {
+			try {
+				const userPayload = await authenticate(request);
+				const { results } = await env.cforum_db.prepare(
+					`SELECT b.*, s.title AS scenario_title, s.slug AS scenario_slug, s.cover_emoji
+					 FROM scenario_ending_badges b
+					 JOIN scenarios s ON s.id = b.scenario_id
+					 WHERE b.user_id = ?
+					 ORDER BY b.achieved_at DESC`
+				).bind(userPayload.id).all();
+				return jsonResponse({ endings: results });
+			} catch (e) {
+				return handleError(e);
+			}
+		}
+
+		// GET /api/scenarios/:id/endings - 剧本全部结局列表（公开，仅标题）
+		const endingListMatch = url.pathname.match(/^\/api\/scenarios\/(\d+)\/endings$/);
+		if (endingListMatch && method === 'GET') {
+			try {
+				const sid = parseInt(endingListMatch[1]);
+				const { results } = await env.cforum_db.prepare(
+					'SELECT id, node_key, ending_type, ending_title FROM scenario_nodes WHERE scenario_id = ? AND is_ending = 1'
+				).bind(sid).all();
+				return jsonResponse({ endings: results });
 			} catch (e) {
 				return handleError(e);
 			}

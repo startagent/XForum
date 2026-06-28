@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { getUser, logout, type User } from '@/lib/auth';
 import { getTheme, toggleTheme, type Theme } from '@/lib/theme';
-import { Home, LogIn, LogOut, Moon, Settings, Shield, Sparkles, Sun, User as UserIcon, UserPlus } from 'lucide-react';
+import { Home, LogIn, LogOut, Moon, Settings, Shield, Sparkles, Sun, User as UserIcon, UserPlus, Play } from 'lucide-react';
 
 export function SiteHeader({
 	currentUser,
@@ -36,13 +36,21 @@ export function SiteHeader({
 					<span className="sr-only">主页</span>
 				</a>
 				<a
-					href="/soul.html"
-					title="灵魂测定"
-					className="inline-flex items-center justify-center rounded-md border border-transparent p-2 text-violet-600 hover:bg-violet-500/10 dark:text-violet-300"
-				>
-					<Sparkles className="h-5 w-5" />
-					<span className="sr-only">灵魂测定</span>
-				</a>
+				href="/soul.html"
+				title="灵魂测定"
+				className="inline-flex items-center justify-center rounded-md border border-transparent p-2 text-violet-600 hover:bg-violet-500/10 dark:text-violet-300"
+			>
+				<Sparkles className="h-5 w-5" />
+				<span className="sr-only">灵魂测定</span>
+			</a>
+			<a
+				href="/scenarios.html"
+				title="夜剧场"
+				className="inline-flex items-center justify-center rounded-md border border-transparent p-2 text-fuchsia-600 hover:bg-fuchsia-500/10 dark:text-fuchsia-300"
+			>
+				<Play className="h-5 w-5" />
+				<span className="sr-only">夜剧场</span>
+			</a>
 				<a
 					href="/#squares"
 					title="广场"

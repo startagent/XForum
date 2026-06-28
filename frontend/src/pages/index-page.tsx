@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Compass, Eye, EyeOff, Flame, Heart, Lock, MessageCircle, Moon, MoreVertical, Pin, RefreshCw, Search, Shield, Sparkles, Trash2, User, X, ArrowRight } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Compass, Eye, EyeOff, Flame, Heart, Lock, MessageCircle, Moon, MoreVertical, Pin, Play, RefreshCw, Search, Shield, Sparkles, Star, Trash2, User, X, ArrowRight } from 'lucide-react';
 
 import { TurnstileWidget } from '@/components/turnstile';
 import { PageShell } from '@/components/page-shell';
@@ -77,6 +77,13 @@ export function IndexPage() {
 	// 灵魂测定统计（公开数据，用于首页灯火墙）
 	const [soulStats, setSoulStats] = React.useState<{ total: number; by_type: Array<{ code: string; name: string; count: number }>; by_tone: Array<{ tone: string; count: number }> } | null>(null);
 
+	// 夜剧场统计（用于首页入口卡）
+	type ScenarioSummary = {
+		id: number; title: string; slug: string; summary: string | null;
+		cover_emoji: string; play_count: number; ending_count: number; content_level: string;
+	};
+	const [scenarioStats, setScenarioStats] = React.useState<{ count: number; total_plays: number; featured: ScenarioSummary[] } | null>(null);
+
 	// 今夜精选：按反差等级 + 点赞排序的帖子
 	type FeaturedPost = {
 		id: number; title: string; excerpt: string | null;
@@ -94,6 +101,16 @@ export function IndexPage() {
 			.catch(() => {});
 		apiFetch<{ posts: FeaturedPost[] }>('/posts/featured?limit=6')
 			.then((r) => setFeatured(r.posts || []))
+			.catch(() => {});
+		apiFetch<{ scenarios: any[] }>('/scenarios')
+			.then((r) => {
+				const list = r.scenarios || [];
+				setScenarioStats({
+					count: list.length,
+					total_plays: list.reduce((a: number, s: any) => a + (s.play_count || 0), 0),
+					featured: list.slice(0, 6),
+				});
+			})
 			.catch(() => {});
 	}, []);
 
@@ -617,8 +634,8 @@ export function IndexPage() {
 						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">已测灵魂</div>
 					</div>
 					<div>
-						<div className="font-serif text-2xl text-fuchsia-200">8</div>
-						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">小众人格</div>
+						<div className="font-serif text-2xl text-fuchsia-200">{scenarioStats?.count ?? '—'}</div>
+						<div className="text-[10px] tracking-[0.2em] text-violet-200/50 uppercase">夜剧场剧本</div>
 					</div>
 					<div>
 						<div className="font-serif text-2xl text-violet-200">L0-L5</div>
@@ -627,6 +644,80 @@ export function IndexPage() {
 				</div>
 				</div>
 			</section>
+
+			{/* 夜剧场入口卡 · 核心差异化 */}
+			{scenarioStats && scenarioStats.featured.length > 0 ? (
+				<section className="relative overflow-hidden rounded-xl border border-fuchsia-900/40 bg-gradient-to-br from-[#1A0B2E] via-[#2A0B3E] to-[#1A0B1E] p-5 sm:p-7">
+					<div className="pointer-events-none absolute inset-0 opacity-40" aria-hidden>
+						<div className="absolute -top-10 right-1/4 h-40 w-40 rounded-full bg-fuchsia-500/20 blur-3xl" />
+						<div className="absolute -bottom-10 left-1/4 h-40 w-40 rounded-full bg-amber-500/10 blur-3xl" />
+					</div>
+					<div className="relative space-y-4">
+						<div className="flex flex-wrap items-baseline justify-between gap-2">
+							<div className="space-y-1">
+								<div className="inline-flex items-center gap-2 rounded-full border border-fuchsia-500/30 bg-fuchsia-500/10 px-3 py-1 text-[11px] tracking-[0.2em] text-fuchsia-200 uppercase">
+									<Play className="h-3 w-3" />
+									Night Theater · 夜剧场
+								</div>
+								<h2 className="font-serif text-2xl sm:text-3xl text-transparent bg-clip-text bg-gradient-to-r from-white via-fuchsia-100 to-amber-100">
+									不是阅读，是潜入。
+								</h2>
+								<p className="max-w-xl text-sm leading-relaxed text-fuchsia-100/70">
+									夜作者执笔，你的选择推进。每个剧本都有多个结局，每个结局都是一段夜里的相遇。
+								</p>
+							</div>
+							<a
+								href="/scenarios.html"
+								className="inline-flex items-center gap-2 self-start rounded-md bg-gradient-to-r from-fuchsia-600 to-rose-600 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-fuchsia-900/40 transition hover:from-fuchsia-500 hover:to-rose-500"
+							>
+								进入剧场
+								<ArrowRight className="h-4 w-4" />
+							</a>
+						</div>
+
+						{/* 剧本卡片预览 · 横向 */}
+						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+							{scenarioStats.featured.slice(0, 3).map((s) => (
+								<a
+									key={s.id}
+									href={`/scenario-play.html?slug=${encodeURIComponent(s.slug)}`}
+									className="group relative overflow-hidden rounded-lg border border-fuchsia-900/40 bg-[#0B0F1E]/60 p-4 backdrop-blur transition hover:border-fuchsia-400/50 hover:shadow-lg hover:shadow-fuchsia-900/20"
+								>
+									<div className="flex items-start gap-3">
+										<div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-lg border border-fuchsia-500/20 bg-white/5 text-3xl">
+											{s.cover_emoji || '🌙'}
+										</div>
+										<div className="flex-1 min-w-0">
+											<h3 className="font-serif text-sm text-violet-50 truncate group-hover:text-white">{s.title}</h3>
+											<p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-fuchsia-100/60">{s.summary || '夜作者未留下简介'}</p>
+											<div className="mt-1.5 flex items-center gap-2 text-[10px] text-violet-300/50">
+												<span className="inline-flex items-center gap-0.5">
+													<Play className="h-2.5 w-2.5" />
+													{s.play_count || 0}
+												</span>
+												{s.ending_count > 0 ? (
+													<span className="inline-flex items-center gap-0.5 text-amber-300/70">
+														<Star className="h-2.5 w-2.5" />
+														{s.ending_count}
+													</span>
+												) : null}
+												<span className="ml-auto text-fuchsia-300/50 group-hover:text-fuchsia-200">进入 →</span>
+											</div>
+										</div>
+									</div>
+								</a>
+							))}
+						</div>
+
+						<div className="flex flex-wrap items-center justify-between gap-2 border-t border-fuchsia-500/10 pt-3 text-[11px] text-fuchsia-300/50">
+							<span>共 {scenarioStats.count} 个剧本 · 累计 {scenarioStats.total_plays} 次上演</span>
+							<a href="/scenarios.html" className="text-fuchsia-200/70 hover:text-fuchsia-100">
+								查看全部 →
+							</a>
+						</div>
+					</div>
+				</section>
+			) : null}
 
 			{/* 灵魂测定入口卡 · 引流利器 */}
 			<section className="relative overflow-hidden rounded-xl border border-fuchsia-900/30 bg-gradient-to-br from-[#1A0B2E] via-[#2A0B3E] to-[#1A0B1E] p-5 sm:p-7">
@@ -657,13 +748,20 @@ export function IndexPage() {
 						<ArrowRight className="h-4 w-4" />
 					</a>
 					<a
-						href="/enneagram.html"
-						className="inline-flex items-center gap-2 self-start rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-200 backdrop-blur transition hover:bg-amber-500/10 sm:self-auto"
-					>
-						<Compass className="h-4 w-4" />
-						九型夜人格
-					</a>
-				</div>
+					href="/enneagram.html"
+					className="inline-flex items-center gap-2 self-start rounded-md border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 text-sm text-amber-200 backdrop-blur transition hover:bg-amber-500/10 sm:self-auto"
+				>
+					<Compass className="h-4 w-4" />
+					九型夜人格
+				</a>
+				<a
+					href="/soul-deep.html"
+					className="inline-flex items-center gap-2 self-start rounded-md border border-violet-500/30 bg-violet-500/5 px-4 py-2.5 text-sm text-violet-200 backdrop-blur transition hover:bg-violet-500/10 sm:self-auto"
+				>
+					<Moon className="h-4 w-4" />
+					灵魂深度 · 星球测试
+				</a>
+			</div>
 
 				{/* 8 人格预览 */}
 				<div className="relative mt-5 grid grid-cols-4 gap-2 border-t border-fuchsia-500/10 pt-4 sm:grid-cols-8">
