@@ -207,7 +207,7 @@ export default {
 
 		// Ensure the database schema exists before anything else.
 		const ensureSchema = async () => {
-			// 检查关键新表是否存在；不存在则全量执行幂等迁移
+			// 检查关键新表是否存在；不存在则全量执行迁移（CREATE/ALTER）
 			let needMigration = true;
 			try {
 				await env.cforum_db.prepare('SELECT 1 FROM scenarios LIMIT 1').first();
@@ -215,7 +215,6 @@ export default {
 			} catch (err: any) {
 				// scenarios 表不存在，需要执行迁移
 			}
-			if (!needMigration) return;
 
 			// using prepare().run() instead of exec ensures each statement is committed
 			const stmts = [
@@ -464,6 +463,8 @@ export default {
 				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`
 			];
 			for (const stmt of stmts) {
+				// 已迁移过的环境只执行幂等的 INSERT/UPDATE；CREATE/ALTER 仅在首次迁移时执行
+				if (!needMigration && /^(CREATE|ALTER)/i.test(stmt.trim())) continue;
 				try {
 					await env.cforum_db.prepare(stmt).run();
 				} catch (e) {
