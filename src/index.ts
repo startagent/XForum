@@ -207,14 +207,8 @@ export default {
 
 		// Ensure the database schema exists before anything else.
 		const ensureSchema = async () => {
-			// 检查关键新表是否存在；不存在则全量执行迁移（CREATE/ALTER）
-			let needMigration = true;
-			try {
-				await env.cforum_db.prepare('SELECT 1 FROM scenarios LIMIT 1').first();
-				needMigration = false;
-			} catch (err: any) {
-				// scenarios 表不存在，需要执行迁移
-			}
+			// 所有语句都是幂等的（CREATE TABLE IF NOT EXISTS / ALTER ADD COLUMN 重复执行被 catch / INSERT OR IGNORE / UPDATE）
+			// 每次请求都执行，确保 schema 始终最新。性能影响可接受（D1 本地缓存）。
 
 			// using prepare().run() instead of exec ensures each statement is committed
 			const stmts = [
@@ -465,12 +459,10 @@ export default {
 				`INSERT OR IGNORE INTO creator_invitations (code, created_by, note, expires_at) VALUES ('PLAY7248', 1, 'preset-initial', NULL);`
 			];
 			for (const stmt of stmts) {
-				// 已迁移过的环境只执行幂等的 INSERT/UPDATE；CREATE/ALTER 仅在首次迁移时执行
-				if (!needMigration && /^(CREATE|ALTER)/i.test(stmt.trim())) continue;
 				try {
 					await env.cforum_db.prepare(stmt).run();
 				} catch (e) {
-					console.error('Error running schema statement', e, stmt);
+					// ALTER ADD COLUMN 重复执行会报错，忽略即可
 				}
 			}
 			// verify posts table exists now
