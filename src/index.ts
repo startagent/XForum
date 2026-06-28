@@ -448,6 +448,8 @@ export default {
 				`UPDATE categories SET name='夜会', description='留个暗号，等一个人对上来', icon='flame' WHERE slug='salon';`,
 				// users 表加 gender 字段（向后兼容）
 				`ALTER TABLE users ADD COLUMN gender TEXT;`,
+				// posts 表加 deleted_at 字段（向后兼容，软删除）
+				`ALTER TABLE posts ADD COLUMN deleted_at INTEGER;`,
 				// soul_results 表加 tone / contrast_level 字段（向后兼容，重复执行会报错但被 catch）
 				`ALTER TABLE soul_results ADD COLUMN tone TEXT;`,
 				`ALTER TABLE soul_results ADD COLUMN contrast_level INTEGER;`,

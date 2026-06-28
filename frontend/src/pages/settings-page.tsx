@@ -42,9 +42,9 @@ export function SettingsPage() {
 	const [creatorLoading, setCreatorLoading] = React.useState(false);
 
 	React.useEffect(() => {
-		apiFetch('/creator/status').then((r) => r.json()).then((d) => setCreatorStatus(d)).catch(() => {});
+		apiFetch('/creator/status').then((d: any) => setCreatorStatus(d)).catch(() => {});
 		if (user && (user.role === 'admin' || user.role === 'creator')) {
-			apiFetch('/creator/invitations').then((r) => r.json()).then((d) => setInviteList(d.invitations || [])).catch(() => {});
+			apiFetch('/creator/invitations').then((d: any) => setInviteList(d.invitations || [])).catch(() => {});
 		}
 	}, [user]);
 
@@ -52,24 +52,19 @@ export function SettingsPage() {
 		setCreatorLoading(true);
 		setCreatorMsg('');
 		try {
-			const r = await apiFetch('/creator/redeem', {
+			await apiFetch('/creator/redeem', {
 				method: 'POST',
 				headers: getSecurityHeaders('POST'),
 				body: JSON.stringify({ code: inviteCode }),
 			});
-			const d = await r.json();
-			if (!r.ok) {
-				setCreatorMsg(d.error || '兑换失败');
-			} else {
-				setCreatorMsg('✓ 已升级为夜作者');
-				setInviteCode('');
-				apiFetch('/creator/status').then((r) => r.json()).then((d) => setCreatorStatus(d)).catch(() => {});
-				if (user) {
-					setUser({ ...user, role: 'creator' });
-				}
+			setCreatorMsg('✓ 已升级为夜作者');
+			setInviteCode('');
+			apiFetch('/creator/status').then((d: any) => setCreatorStatus(d)).catch(() => {});
+			if (user) {
+				setUser({ ...user, role: 'creator' });
 			}
-		} catch (e) {
-			setCreatorMsg('网络错误');
+		} catch (e: any) {
+			setCreatorMsg(e?.message || '兑换失败');
 		} finally {
 			setCreatorLoading(false);
 		}
@@ -79,21 +74,16 @@ export function SettingsPage() {
 		setCreatorLoading(true);
 		setCreatorMsg('');
 		try {
-			const r = await apiFetch('/creator/invitations', {
+			const d = await apiFetch<{ code: string }>('/creator/invitations', {
 				method: 'POST',
 				headers: getSecurityHeaders('POST'),
 				body: JSON.stringify({ note: inviteNote || null, expires_in_days: 0 }),
 			});
-			const d = await r.json();
-			if (!r.ok) {
-				setCreatorMsg(d.error || '生成失败');
-			} else {
-				setCreatorMsg(`✓ 已生成邀请码：${d.code}`);
-				setInviteNote('');
-				apiFetch('/creator/invitations').then((r) => r.json()).then((d) => setInviteList(d.invitations || [])).catch(() => {});
-			}
-		} catch (e) {
-			setCreatorMsg('网络错误');
+			setCreatorMsg(`✓ 已生成邀请码：${d.code}`);
+			setInviteNote('');
+			apiFetch('/creator/invitations').then((d: any) => setInviteList(d.invitations || [])).catch(() => {});
+		} catch (e: any) {
+			setCreatorMsg(e?.message || '生成失败');
 		} finally {
 			setCreatorLoading(false);
 		}
