@@ -2918,7 +2918,8 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
                      LEFT JOIN (SELECT post_id, COUNT(*) as like_count FROM likes GROUP BY post_id) lc ON lc.post_id = posts.id
                      LEFT JOIN (SELECT post_id, COUNT(*) as comment_count FROM comments GROUP BY post_id) cc ON cc.post_id = posts.id`;
                 
-                let countQuery = `SELECT COUNT(*) as total FROM posts`;
+                // countQuery 也需要 JOIN users，当广场关闭时需要过滤角色
+                let countQuery = `SELECT COUNT(*) as total FROM posts JOIN users ON posts.author_id = users.id`;
 
                 const params: any[] = [];
                 const countParams: any[] = [];
