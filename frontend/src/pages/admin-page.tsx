@@ -28,7 +28,8 @@ export function AdminPage() {
 		notify_on_user_delete: false,
 		notify_on_username_change: false,
 		notify_on_avatar_change: false,
-		notify_on_manual_verify: false
+		notify_on_manual_verify: false,
+		square_enabled: false
 	});
 
 	const [newCategoryName, setNewCategoryName] = React.useState('');
@@ -69,7 +70,8 @@ export function AdminPage() {
 				notify_on_user_delete: !!settings.notify_on_user_delete,
 				notify_on_username_change: !!settings.notify_on_username_change,
 				notify_on_avatar_change: !!settings.notify_on_avatar_change,
-				notify_on_manual_verify: !!settings.notify_on_manual_verify
+				notify_on_manual_verify: !!settings.notify_on_manual_verify,
+				square_enabled: !!settings.square_enabled
 			});
 		} catch (e: any) {
 			setError(String(e?.message || e));
@@ -277,6 +279,15 @@ export function AdminPage() {
 								<CardTitle>站点设置</CardTitle>
 							</CardHeader>
 							<CardContent className="space-y-4">
+								<label className="flex items-center gap-2 text-sm">
+									<input
+										type="checkbox"
+										className="h-4 w-4"
+										checked={systemSettings.square_enabled}
+										onChange={(e) => setSystemSettings((s) => ({ ...s, square_enabled: e.target.checked }))}
+									/>
+									启用广场（关闭后首页只显示管理员/夜作者帖子）
+								</label>
 								<label className="flex items-center gap-2 text-sm">
 									<input
 										type="checkbox"

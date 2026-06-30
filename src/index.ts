@@ -572,12 +572,13 @@ export default {
 
 				const settings = await env.cforum_db.prepare("SELECT key, value FROM settings").all();
 				const config: any = {
-					turnstile_enabled: false,
-					notify_on_user_delete: false,
-					notify_on_username_change: false,
-					notify_on_avatar_change: false,
-					notify_on_manual_verify: false
-				};
+				turnstile_enabled: false,
+				notify_on_user_delete: false,
+				notify_on_username_change: false,
+				notify_on_avatar_change: false,
+				notify_on_manual_verify: false,
+				square_enabled: false
+			};
 				
 				if (settings.results) {
 					for (const row of settings.results) {
@@ -598,7 +599,7 @@ export default {
 				if (userPayload.role !== 'admin') return jsonResponse({ error: 'Unauthorized' }, 403);
 
 				const body = await request.json() as any;
-				const { turnstile_enabled, notify_on_user_delete, notify_on_username_change, notify_on_avatar_change, notify_on_manual_verify } = body;
+				const { turnstile_enabled, notify_on_user_delete, notify_on_username_change, notify_on_avatar_change, notify_on_manual_verify, square_enabled } = body;
 				
 				const stmt = env.cforum_db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
 				const batch = [];
@@ -608,6 +609,7 @@ export default {
 				if (notify_on_username_change !== undefined) batch.push(stmt.bind('notify_on_username_change', notify_on_username_change ? '1' : '0'));
 				if (notify_on_avatar_change !== undefined) batch.push(stmt.bind('notify_on_avatar_change', notify_on_avatar_change ? '1' : '0'));
 				if (notify_on_manual_verify !== undefined) batch.push(stmt.bind('notify_on_manual_verify', notify_on_manual_verify ? '1' : '0'));
+				if (square_enabled !== undefined) batch.push(stmt.bind('square_enabled', square_enabled ? '1' : '0'));
 				
 				if (batch.length > 0) await env.cforum_db.batch(batch);
 
@@ -2890,6 +2892,10 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
 
 		if (url.pathname === '/api/posts' && method === 'GET') {
 			try {
+				// 检查广场是否启用
+				const squareSetting = await env.cforum_db.prepare("SELECT value FROM settings WHERE key = 'square_enabled'").first<DBSetting>();
+				const squareEnabled = squareSetting && squareSetting.value === '1';
+				
 				const limit = parseInt(url.searchParams.get('limit') || '20');
 				const offset = parseInt(url.searchParams.get('offset') || '0');
 				const categoryId = url.searchParams.get('category_id');
@@ -2917,6 +2923,11 @@ const user = await env.cforum_db.prepare('SELECT * FROM users WHERE email_change
                 const params: any[] = [];
                 const countParams: any[] = [];
 				const conditions: string[] = [];
+
+				// 广场关闭时，只显示管理员帖子
+				if (!squareEnabled) {
+					conditions.push(`(users.role = 'admin' OR users.role = 'creator')`);
+				}
 
                 if (categoryId) {
                     if (categoryId === 'uncategorized') {
