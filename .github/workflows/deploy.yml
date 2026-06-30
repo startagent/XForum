@@ -65,15 +65,24 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
 
-      - name: Deploy to Cloudflare Workers and Pages
-        uses: cloudflare/wrangler-action@v3
+      - name: Deploy to Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3.8.0
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: deploy --env=""
-          secrets: |
-            JWT_SECRET
+
+      - name: Upload JWT_SECRET (optional)
+        run: |
+          if [ -n "$JWT_SECRET" ]; then
+            echo "🔐 Uploading JWT_SECRET..."
+            npx wrangler secret put JWT_SECRET --env="" <<< "$JWT_SECRET"
+          else
+            echo "⏭️  Skipping JWT_SECRET (not configured)"
+          fi
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
 
       - name: Upload Turnstile secrets (optional)
