@@ -26,6 +26,13 @@ jobs:
       - name: Build frontend
         run: npm run build:frontend
 
+      - name: Copy Pages Functions to public/functions
+        run: |
+          echo "📋 Copying Pages Functions..."
+          cp -r functions public/functions
+          echo "✅ Functions copied to public/functions"
+          ls -la public/functions/
+
       - name: Ensure D1 database exists in current account
         run: |
           set -euo pipefail
@@ -70,13 +77,14 @@ jobs:
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          command: deploy --env=""
+          command: deploy
+        continue-on-error: false
 
       - name: Upload JWT_SECRET (optional)
         run: |
           if [ -n "$JWT_SECRET" ]; then
             echo "🔐 Uploading JWT_SECRET..."
-            npx wrangler secret put JWT_SECRET --env="" <<< "$JWT_SECRET"
+            npx wrangler secret put JWT_SECRET  <<< "$JWT_SECRET"
           else
             echo "⏭️  Skipping JWT_SECRET (not configured)"
           fi
@@ -89,8 +97,8 @@ jobs:
         run: |
           if [ -n "$TURNSTILE_SITE_KEY" ]; then
             echo "🔐 Uploading Turnstile configuration..."
-            npx wrangler secret put TURNSTILE_SITE_KEY --env="" <<< "$TURNSTILE_SITE_KEY"
-            npx wrangler secret put TURNSTILE_SECRET_KEY --env="" <<< "$TURNSTILE_SECRET_KEY"
+            npx wrangler secret put TURNSTILE_SITE_KEY  <<< "$TURNSTILE_SITE_KEY"
+            npx wrangler secret put TURNSTILE_SECRET_KEY  <<< "$TURNSTILE_SECRET_KEY"
           else
             echo "⏭️  Skipping Turnstile configuration (not configured)"
           fi
@@ -104,7 +112,7 @@ jobs:
         run: |
           if [ -n "$BASE_URL" ]; then
             echo "🌐 Uploading BASE_URL configuration..."
-            npx wrangler secret put BASE_URL --env="" <<< "$BASE_URL"
+            npx wrangler secret put BASE_URL  <<< "$BASE_URL"
           else
             echo "⏭️  Skipping BASE_URL configuration (will use request origin)"
           fi
@@ -117,13 +125,13 @@ jobs:
         run: |
           if [ -n "$SMTP_HOST" ]; then
             echo "📧 Uploading SMTP configuration..."
-            npx wrangler secret put SMTP_HOST --env="" <<< "$SMTP_HOST"
-            npx wrangler secret put SMTP_PORT --env="" <<< "$SMTP_PORT"
-            npx wrangler secret put SMTP_USER --env="" <<< "$SMTP_USER"
-            npx wrangler secret put SMTP_PASS --env="" <<< "$SMTP_PASS"
-            npx wrangler secret put SMTP_FROM --env="" <<< "$SMTP_FROM"
+            npx wrangler secret put SMTP_HOST  <<< "$SMTP_HOST"
+            npx wrangler secret put SMTP_PORT  <<< "$SMTP_PORT"
+            npx wrangler secret put SMTP_USER  <<< "$SMTP_USER"
+            npx wrangler secret put SMTP_PASS  <<< "$SMTP_PASS"
+            npx wrangler secret put SMTP_FROM  <<< "$SMTP_FROM"
             if [ -n "$SMTP_FROM_NAME" ]; then
-              npx wrangler secret put SMTP_FROM_NAME --env="" <<< "$SMTP_FROM_NAME"
+              npx wrangler secret put SMTP_FROM_NAME  <<< "$SMTP_FROM_NAME"
             fi
           else
             echo "⏭️  Skipping SMTP configuration (not configured)"
